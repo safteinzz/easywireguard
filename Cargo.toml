@@ -1,0 +1,30 @@
+[package]
+name = "easywireguard"
+version = "0.1.0"
+edition = "2024"
+description = "make wireguard easy - interfaces, keys and full-mesh configs in one CLI + TUI"
+license = "AGPL-3.0-only"
+repository = "https://gitlab.com/safteinzz/easywireguard"
+keywords = ["wireguard", "vpn", "mesh", "cli", "networking"]
+categories = ["command-line-utilities", "network-programming"]
+
+# The crate is `easywireguard`, but the command you type is the shorter `ewg`.
+[[bin]]
+name = "ewg"
+path = "src/main.rs"
+
+[dependencies]
+anyhow       = "1"                                             # error handling across the engines
+clap         = { version = "4", features = ["derive", "env"] } # CLI parsing (derive + env-var args)
+ratatui      = "0.29"                                          # the TUI (bare `ewg`); bundles crossterm
+colored      = "2"                                             # colored CLI output (list)
+serde        = { version = "1", features = ["derive"] }        # manifest / registry (de)serialization
+serde_json   = "1"                                             # --json machine-readable output
+toml         = "0.8"                                           # manifest / registry format
+x25519-dalek = "2"                                             # pure-rust X25519 (wireguard keys)
+getrandom    = "0.2"                                           # system RNG for keys / PSKs
+base64       = "0.22"                                          # wireguard keys are base64
+dirs         = "5"                                             # locate the config dir portably
+
+[dev-dependencies]
+tempfile     = "3"                                             # sandbox dirs for e2e tests
