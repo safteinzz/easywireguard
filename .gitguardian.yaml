@@ -1,0 +1,8 @@
+version: 2
+secret:
+  ignored-matches:
+    # Fixed WireGuard test vector, not a real secret. It pins the
+    # gen/round-trip regression in src/keys.rs and the mesh-gen e2e in
+    # tests/cli.rs; it protects no live interface or real key.
+    - name: wireguard test private key (src/keys.rs + tests/cli.rs)
+      match: wFW7oUjIpLCfZW2UwsfTlLDGrZb9iJH3bK6nosB5IGI=
