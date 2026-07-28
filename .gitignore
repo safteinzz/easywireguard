@@ -6,3 +6,7 @@ GEMINI.md
 .cursor/
 .aider*
 .windsurfrules
+/out
+
+# Personal mesh manifest (may carry private keys) - never commit from the tool repo
+/mesh.toml

@@ -25,6 +25,8 @@ x25519-dalek = "2"                                             # pure-rust X2551
 getrandom    = "0.2"                                           # system RNG for keys / PSKs
 base64       = "0.22"                                          # wireguard keys are base64
 dirs         = "5"                                             # locate the config dir portably
+qrcode       = { version = "0.14", default-features = false }  # QR: terminal render + module matrix
+image        = { version = "0.25", default-features = false, features = ["png"] } # write the QR as a PNG
 
 [dev-dependencies]
 tempfile     = "3"                                             # sandbox dirs for e2e tests

@@ -28,6 +28,24 @@ pub struct Node {
     /// Where peers reach this node (`host:port`). Nodes others dial need one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub endpoint: Option<String>,
+    /// What peers route TO this node. Defaults to just this node's `/32`; set it
+    /// to `0.0.0.0/0` (a full-tunnel exit) or a LAN subnet (site-to-site) so peers
+    /// send that traffic here. Comma-separated for multiple.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowed_ips: Option<String>,
+    /// DNS server for THIS node's own `[Interface]` (e.g. a Pi-hole behind the
+    /// tunnel), written as `DNS = ...` when present. Comma-separated for multiple.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dns: Option<String>,
+    /// Seconds between keepalives sent TO this node (set on a stable/behind-NAT
+    /// endpoint so roaming peers hold the tunnel open, e.g. `25`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keepalive: Option<u16>,
+    /// For a SPOKE (no endpoint): the hubs it connects to, by name. Empty = all
+    /// hubs. A HUB (has an endpoint) ignores this and peers with everyone that
+    /// needs it. This is what makes the mesh hub-and-spoke instead of full.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hubs: Vec<String>,
     /// Written to this node's own `[Interface]` when present.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub private_key: Option<String>,
@@ -115,8 +133,28 @@ impl Manifest {
         Ok(())
     }
 
-    /// Generate `node`'s config: its `[Interface]` plus a `[Peer]` for every
-    /// other node (never itself), each peer routed by its `/32` address.
+    /// Whether `node` is a hub (reachable: has an endpoint) vs a spoke.
+    fn is_hub(node: &Node) -> bool {
+        node.endpoint.is_some()
+    }
+
+    /// Should `node`'s config list `peer`? Hub-and-spoke rules:
+    /// - a hub meshes with every other hub, and with spokes that point at it
+    ///   (or point nowhere, meaning "all hubs");
+    /// - a spoke lists only its hubs (or every hub when it named none).
+    fn peers_with(&self, node: &Node, peer: &Node) -> bool {
+        if peer.name == node.name {
+            return false;
+        }
+        if Self::is_hub(node) {
+            Self::is_hub(peer) || peer.hubs.is_empty() || peer.hubs.iter().any(|h| h == &node.name)
+        } else {
+            Self::is_hub(peer) && (node.hubs.is_empty() || node.hubs.iter().any(|h| h == &peer.name))
+        }
+    }
+
+    /// Generate `node`'s config: its `[Interface]` plus a `[Peer]` for each node
+    /// it should reach under the hub-and-spoke rules, routed by allowed-ips.
     pub fn node_config(&self, node: &Node) -> String {
         let mut s = String::new();
         s.push_str("[Interface]\n");
@@ -125,6 +163,9 @@ impl Manifest {
             None => s.push_str("PrivateKey = <PASTE PRIVATE KEY>\n"),
         }
         s.push_str(&format!("Address    = {}\n", node.address));
+        if let Some(dns) = &node.dns {
+            s.push_str(&format!("DNS        = {dns}\n"));
+        }
         s.push_str(&format!("ListenPort = {}\n", self.listen_port));
         if let Some(pu) = &node.post_up {
             s.push_str(&format!("PostUp     = {pu}\n"));
@@ -134,15 +175,24 @@ impl Manifest {
         }
 
         for peer in &self.nodes {
-            if peer.name == node.name {
-                continue; // never peer with yourself
+            if !self.peers_with(node, peer) {
+                continue;
             }
             s.push_str(&format!("\n[Peer]  # {}\n", peer.name));
             s.push_str(&format!("PublicKey  = {}\n", peer.public_key));
             if let Some(ep) = &peer.endpoint {
                 s.push_str(&format!("Endpoint   = {ep}\n"));
             }
-            s.push_str(&format!("AllowedIPs = {}/32\n", ip_of(&peer.address)));
+            // What this peer advertises: its override (e.g. 0.0.0.0/0 for a
+            // full-tunnel exit, or a LAN subnet) or just its own /32 by default.
+            let ips = peer
+                .allowed_ips
+                .clone()
+                .unwrap_or_else(|| format!("{}/32", ip_of(&peer.address)));
+            s.push_str(&format!("AllowedIPs = {ips}\n"));
+            if let Some(k) = peer.keepalive {
+                s.push_str(&format!("PersistentKeepalive = {k}\n"));
+            }
         }
         s
     }
@@ -174,6 +224,10 @@ mod tests {
                     public_key: "PUB_A".into(),
                     endpoint: Some("vpn-a.example.com:51820".into()),
                     private_key: Some("PRIV_A".into()),
+                    allowed_ips: None,
+                    dns: None,
+                    keepalive: None,
+                    hubs: Vec::new(),
                     post_up: Some("iptables -A FORWARD -i wg0 -j ACCEPT".into()),
                     post_down: None,
                 },
@@ -183,6 +237,10 @@ mod tests {
                     public_key: "PUB_B".into(),
                     endpoint: Some("vpn-b.example.com:51820".into()),
                     private_key: None,
+                    allowed_ips: None,
+                    dns: None,
+                    keepalive: None,
+                    hubs: Vec::new(),
                     post_up: None,
                     post_down: None,
                 },
@@ -207,6 +265,20 @@ mod tests {
         let cfg = m.node_config(&m.nodes[0]);
         assert!(cfg.contains("AllowedIPs = 10.10.0.2/32"));
         assert!(!cfg.contains("10.10.0.2/24"), "peers are single /32 routes");
+    }
+
+    #[test]
+    fn overrides_emit_full_tunnel_dns_and_keepalive() {
+        let mut m = manifest();
+        m.nodes[0].allowed_ips = Some("0.0.0.0/0".into()); // A is a full-tunnel exit
+        m.nodes[0].keepalive = Some(25);
+        m.nodes[1].dns = Some("192.168.10.250".into()); // B uses a Pi-hole
+        let cfg_b = m.node_config(&m.nodes[1]);
+        assert!(cfg_b.contains("AllowedIPs = 0.0.0.0/0"), "A's override should win over /32");
+        assert!(cfg_b.contains("PersistentKeepalive = 25"));
+        assert!(cfg_b.contains("DNS        = 192.168.10.250"), "B's own interface DNS");
+        // and the default is still a /32 when unset (A's config, B has no override)
+        assert!(m.node_config(&m.nodes[0]).contains("AllowedIPs = 10.10.0.2/32"));
     }
 
     #[test]
@@ -235,6 +307,10 @@ mod tests {
                     public_key: "x".into(),
                     endpoint: None,
                     private_key: None,
+                    allowed_ips: None,
+                    dns: None,
+                    keepalive: None,
+                    hubs: Vec::new(),
                     post_up: None,
                     post_down: None,
                 },
@@ -244,6 +320,10 @@ mod tests {
                     public_key: "y".into(),
                     endpoint: None,
                     private_key: None,
+                    allowed_ips: None,
+                    dns: None,
+                    keepalive: None,
+                    hubs: Vec::new(),
                     post_up: None,
                     post_down: None,
                 },
@@ -262,6 +342,10 @@ mod tests {
             public_key: "z".into(),
             endpoint: None,
             private_key: None,
+            allowed_ips: None,
+            dns: None,
+            keepalive: None,
+            hubs: Vec::new(),
             post_up: None,
             post_down: None,
         };
@@ -278,6 +362,10 @@ mod tests {
             public_key: "z".into(),
             endpoint: None,
             private_key: None,
+            allowed_ips: None,
+            dns: None,
+            keepalive: None,
+            hubs: Vec::new(),
             post_up: None,
             post_down: None,
         };
@@ -325,6 +413,10 @@ mod tests {
                     public_key: "x".into(),
                     endpoint: None,
                     private_key: None,
+                    allowed_ips: None,
+                    dns: None,
+                    keepalive: None,
+                    hubs: Vec::new(),
                     post_up: None,
                     post_down: None,
                 },
@@ -334,6 +426,10 @@ mod tests {
                     public_key: "y".into(),
                     endpoint: None,
                     private_key: None,
+                    allowed_ips: None,
+                    dns: None,
+                    keepalive: None,
+                    hubs: Vec::new(),
                     post_up: None,
                     post_down: None,
                 },

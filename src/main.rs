@@ -22,7 +22,8 @@ use std::path::{Path, PathBuf};
     after_help = "Run bare `ewg` for the interface manager TUI. `dir` registers \
                   where your .conf files live so `list`/`up`/`down`/`status`/TUI \
                   span them all. `mesh` edits a manifest; `mesh gen` turns it into \
-                  each node's config as \"all peers minus itself\"."
+                  each node's config as \"all peers minus itself\". `qr` renders any \
+                  config (a .conf or a mesh node) as a scannable QR for a phone."
 )]
 struct Cli {
     /// Use only this dir for this run, overriding the registry (or set $EWG_DIR)
@@ -34,6 +35,7 @@ struct Cli {
 }
 
 #[derive(Subcommand)]
+#[allow(clippy::large_enum_variant)] // clap arg enums: boxing fights the derive
 enum Cmd {
     /// Interface manager TUI (also the default with no subcommand)
     Tui,
@@ -68,6 +70,22 @@ enum Cmd {
     /// Derive the public key from a private key  <PRIVATE>
     #[command(verbatim_doc_comment)]
     Pubkey { private: String },
+
+    /// Render a wg config as a scannable QR - a .conf file or a manifest node
+    ///   ewg qr <path.conf>           QR for that file (scan into the wg app)
+    ///   ewg qr <node> -m mesh.toml   QR for that node's generated config
+    ///   -o FILE.png                  also write a PNG
+    #[command(verbatim_doc_comment)]
+    Qr {
+        /// A `.conf` file path, or a node name in the manifest
+        target: String,
+        /// Manifest to resolve a node name from
+        #[arg(short = 'm', long, default_value = "mesh.toml")]
+        manifest: PathBuf,
+        /// Also write the QR as a PNG here
+        #[arg(short, long)]
+        out: Option<PathBuf>,
+    },
 
     /// Update ewg to the latest release
     ///   -y   skip the confirm prompt
@@ -119,6 +137,7 @@ struct MeshArgs {
 }
 
 #[derive(Subcommand)]
+#[allow(clippy::large_enum_variant)] // clap arg enums: boxing fights the derive
 enum MeshAction {
     /// Add a node to the manifest  <NAME>
     #[command(verbatim_doc_comment)]
@@ -130,6 +149,20 @@ enum MeshAction {
         pubkey: String,
         #[arg(long)]
         endpoint: Option<String>,
+        /// What peers route TO this node: `0.0.0.0/0` (full-tunnel exit) or a LAN
+        /// subnet (site-to-site). Defaults to this node's own `/32`.
+        #[arg(long = "allowed-ips")]
+        allowed_ips: Option<String>,
+        /// DNS for this node's own interface (e.g. a Pi-hole behind the tunnel)
+        #[arg(long)]
+        dns: Option<String>,
+        /// Seconds between keepalives peers send to this node (e.g. 25)
+        #[arg(long)]
+        keepalive: Option<u16>,
+        /// Hub(s) this spoke dials, by name (repeatable). Omit = all hubs. Ignored
+        /// for a hub (one with an endpoint), which meshes with everyone.
+        #[arg(long = "hub")]
+        hub: Vec<String>,
         #[arg(long)]
         private: Option<String>,
         #[arg(long)]
@@ -189,6 +222,11 @@ fn main() -> Result<()> {
         Some(Cmd::Key) => cmd_key(),
         Some(Cmd::Psk) => cmd_psk(),
         Some(Cmd::Pubkey { private }) => cmd_pubkey(&private),
+        Some(Cmd::Qr {
+            target,
+            manifest,
+            out,
+        }) => cmd_qr(&target, &manifest, out.as_deref()),
         Some(Cmd::Update { yes }) => cmd_update(yes),
     }
 }
@@ -292,6 +330,10 @@ fn cmd_mesh(args: MeshArgs) -> Result<()> {
             address,
             pubkey,
             endpoint,
+            allowed_ips,
+            dns,
+            keepalive,
+            hub,
             private,
             postup,
             postdown,
@@ -302,6 +344,10 @@ fn cmd_mesh(args: MeshArgs) -> Result<()> {
                 address,
                 public_key: pubkey,
                 endpoint,
+                allowed_ips,
+                dns,
+                keepalive,
+                hubs: hub,
                 private_key: private,
                 post_up: postup,
                 post_down: postdown,
@@ -382,6 +428,84 @@ fn cmd_pubkey(private: &str) -> Result<()> {
     Ok(())
 }
 
+/// Render a wg config as a QR. `target` is an existing `.conf` file, else a node
+/// name generated from the manifest. Prints a scannable QR to the terminal;
+/// `-o` also writes a PNG.
+fn cmd_qr(target: &str, manifest: &Path, out: Option<&Path>) -> Result<()> {
+    use qrcode::QrCode;
+    use qrcode::render::unicode;
+
+    let config = qr_config(target, manifest)?;
+
+    if config.contains("<PASTE PRIVATE KEY>") {
+        eprintln!(
+            "{}",
+            "warning: config has no private key (placeholder) - the QR won't import a \
+             working tunnel; give the node a `private` key first"
+                .yellow()
+        );
+    }
+
+    let code = QrCode::with_error_correction_level(config.as_bytes(), qrcode::EcLevel::L)
+        .context("encoding config into a QR")?;
+
+    // Compact half-block QR with a quiet zone - scan it straight off the screen.
+    let art = code.render::<unicode::Dense1x2>().quiet_zone(true).build();
+    println!("{art}");
+
+    if let Some(path) = out {
+        write_png(&code, path)?;
+        if std::io::stderr().is_terminal() {
+            eprintln!("wrote {}", path.display());
+        }
+    }
+    Ok(())
+}
+
+/// Resolve the text for `qr`: an existing file's contents win; otherwise treat
+/// `target` as a manifest node name and generate that node's config.
+fn qr_config(target: &str, manifest: &Path) -> Result<String> {
+    if Path::new(target).is_file() {
+        return std::fs::read_to_string(target).with_context(|| format!("reading `{target}`"));
+    }
+    let m = Manifest::load(manifest).with_context(|| {
+        format!(
+            "`{target}` is not a file, and manifest `{}` couldn't be loaded to resolve it as a node",
+            manifest.display()
+        )
+    })?;
+    let node = m
+        .nodes
+        .iter()
+        .find(|n| n.name == target)
+        .with_context(|| format!("no `.conf` file or manifest node named `{target}`"))?;
+    Ok(m.node_config(node))
+}
+
+/// Black-on-white PNG from the QR matrix: each module scaled up, with a 4-module
+/// quiet zone. Decoupled from `qrcode`'s own image feature so versions can't clash.
+fn write_png(code: &qrcode::QrCode, path: &Path) -> Result<()> {
+    use image::{ImageBuffer, Luma};
+    const SCALE: u32 = 8;
+    const QUIET: u32 = 4;
+    let w = code.width() as u32;
+    let side = (w + 2 * QUIET) * SCALE;
+    let colors = code.to_colors();
+    let img = ImageBuffer::from_fn(side, side, |x, y| {
+        let (mx, my) = (x / SCALE, y / SCALE);
+        if mx < QUIET || my < QUIET || mx >= w + QUIET || my >= w + QUIET {
+            return Luma([255u8]); // quiet zone
+        }
+        let idx = ((my - QUIET) * w + (mx - QUIET)) as usize;
+        match colors[idx] {
+            qrcode::Color::Dark => Luma([0u8]),
+            qrcode::Color::Light => Luma([255u8]),
+        }
+    });
+    img.save(path)
+        .with_context(|| format!("writing PNG `{}`", path.display()))
+}
+
 fn cmd_update(yes: bool) -> Result<()> {
     if !yes {
         print!("update ewg via `cargo install easywireguard --force`? [y/N] ");
@@ -442,4 +566,49 @@ fn elevate_for(dirs: &[PathBuf]) -> Result<()> {
 #[cfg(not(unix))]
 fn elevate_for(_dirs: &[PathBuf]) -> Result<()> {
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn qr_config_reads_an_existing_conf_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("x.conf");
+        std::fs::write(&p, "[Interface]\nAddress = 10.0.0.9/24\n").unwrap();
+        let got = qr_config(p.to_str().unwrap(), Path::new("does-not-exist.toml")).unwrap();
+        assert!(got.contains("10.0.0.9/24"));
+    }
+
+    #[test]
+    fn qr_config_generates_a_node_from_the_manifest() {
+        let dir = tempfile::tempdir().unwrap();
+        let mp = dir.path().join("mesh.toml");
+        std::fs::write(
+            &mp,
+            "[[node]]\nname='a'\naddress='10.0.0.1/24'\npublic_key='PUB_A'\n\
+             [[node]]\nname='b'\naddress='10.0.0.2/24'\npublic_key='PUB_B'\nendpoint='vpn-b:51820'\n",
+        )
+        .unwrap();
+        let got = qr_config("a", &mp).unwrap();
+        assert!(got.contains("[Interface]"), "node config missing interface");
+        assert!(got.contains("PUB_B"), "peer b should appear");
+        assert!(!got.contains("PUB_A"), "a must not peer with itself");
+    }
+
+    #[test]
+    fn qr_config_unknown_target_errors() {
+        let err = qr_config("ghost", Path::new("nope.toml")).unwrap_err().to_string();
+        assert!(err.contains("not a file"), "got: {err}");
+    }
+
+    #[test]
+    fn a_typical_wg_config_fits_in_a_qr() {
+        let cfg = "[Interface]\nPrivateKey = MN9c1GcVMpNJ7kV1ZeC6ccml6q9Swz0plla2axvHa0E=\n\
+                   Address = 10.10.1.2/24\nDNS = 192.168.10.250\n\n[Peer]\n\
+                   PublicKey = FcNyhptCK62097pnVF2P092kob9+8vJtsFMc7Ws4ojc=\n\
+                   Endpoint = vpn-villena.safteinzz.com:51820\nAllowedIPs = 0.0.0.0/0\n";
+        assert!(qrcode::QrCode::new(cfg.as_bytes()).is_ok());
+    }
 }
