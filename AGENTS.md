@@ -5,6 +5,8 @@
 - Commit messages: short conventional one-liners (`feat:`, `fix:`, `release vX.Y.Z:`). Never co-authored, no trailers.
 - No em-dashes in any user-facing text (help, errors, README, commit messages).
 - Test by driving the built binary against temp dirs only; never touch real WireGuard interfaces, `/etc/wireguard`, or a user's real keys.
+- A test exists to catch a FUTURE silent regression (key/base64 correctness, config generation, address allocation, parsing) - never write one just to prove the edit you made landed (keybinding wiring, a wizard prefilling, a renamed field, an output string); delete those on sight.
+- TUI/UI changes are verified by the USER: make the change, say what to look at, and ask - no `TestBackend` render dumps and no greps to confirm your own edit applied.
 
 ## Invariants and gotchas
 - Keys are pure Rust (x25519-dalek); no `wg` binary is required. The private key is clamped on generation so output round-trips identically to `wg genkey`/`wg pubkey`; when touching key code, keep the clamp or generated keys diverge from what WireGuard accepts. A regression test pins a known private/public pair; keep it.

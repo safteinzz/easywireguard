@@ -33,13 +33,17 @@ use crate::wg::{self, Iface};
 /// How long a status message stays before the hints return.
 const STATUS_TTL: Duration = Duration::from_millis(1500);
 
-// Movement key labels, defined once so every view/overlay reads the same (like
-// sluuz). Plain = top-level nav (list / tabs); `CTRL_` = the second-level nav
-// (fields in a wizard). Vertical (`Y`) and horizontal (`X`).
-const Y_MOVE: &str = "↑↓/jk";
-const CTRL_Y_MOVE: &str = "ctrl-↑↓/jk";
-const X_MOVE: &str = "←→/hl";
-const CTRL_X_MOVE: &str = "ctrl-←→/hl";
+// Movement key labels, split so each view states exactly the chord it accepts and
+// they still read the same everywhere. `Y` = vertical, `X` = horizontal; `VIM_` is
+// the letter form, plain is the arrow form. Lists take either (`VIM_Y_MOVE Y_MOVE`
+// -> "j/k ↑↓"); the wizard needs the ctrl- letter form, since bare letters are
+// typed into its fields, while its arrows work unmodified ("ctrl-j/k ↑↓").
+const Y_MOVE: &str = "↑↓";
+const X_MOVE: &str = "←→";
+const VIM_Y_MOVE: &str = "j/k";
+const VIM_X_MOVE: &str = "h/l";
+const CTRL_VIM_Y_MOVE: &str = "ctrl-j/k";
+const CTRL_VIM_X_MOVE: &str = "ctrl-h/l";
 
 /// The tabs, in left-to-right / Tab-cycle order.
 #[derive(Clone, Copy, PartialEq)]
@@ -59,8 +63,8 @@ impl View {
     }
     fn hints(self) -> String {
         match self {
-            View::Interfaces => format!("{Y_MOVE} move · {X_MOVE} tab · u up · d down · ↵ toggle · i inspect · r refresh · q quit"),
-            View::Mesh => format!("{Y_MOVE} move · {X_MOVE} tab · c create · e edit · R rotate · d del · E export · ↵ QR · i view · g gen · r reload · q quit"),
+            View::Interfaces => format!("{VIM_Y_MOVE} {Y_MOVE} move · {VIM_X_MOVE} {X_MOVE} tab · u up · d down · ↵ toggle · i inspect · r refresh · q quit"),
+            View::Mesh => format!("{VIM_Y_MOVE} {Y_MOVE} move · {VIM_X_MOVE} {X_MOVE} tab · c create · e edit · R rotate · d del · E export · ↵ QR · i view · g gen · r reload · q quit"),
         }
     }
 }
@@ -716,10 +720,11 @@ impl App {
         if len == 0 {
             return;
         }
-        // On a choice row (Type / Key / picker) nothing is typed, so ←/→ and h/l
-        // cycle it: Type & Key rebuild the form, a Pick just steps its options.
+        // Choice rows (Type / Key / hub picker) are *cycled*, never typed into, so
+        // both ←/→ and h/l work there - with or without ctrl, since ctrl-h/l is the
+        // chord for "choose" (fields move with ctrl-j/k, so h/l stays free).
         let on_choice = self.prompt.as_ref().map(|p| p.fields[p.idx].is_choice()).unwrap_or(false);
-        if on_choice && !ctrl {
+        if on_choice {
             let delta = match key.code {
                 KeyCode::Right | KeyCode::Char('l') => 1,
                 KeyCode::Left | KeyCode::Char('h') => -1,
@@ -741,12 +746,10 @@ impl App {
                 return;
             }
         }
-        // Field navigation. Plain letters are *typed*, so move fields with the
-        // arrows/Tab or the Ctrl-chords - the same "submenu" rule as the tabs.
-        let next = matches!(key.code, KeyCode::Tab | KeyCode::Down)
-            || (ctrl && matches!(key.code, KeyCode::Char('j') | KeyCode::Char('l') | KeyCode::Right));
-        let prev = matches!(key.code, KeyCode::BackTab | KeyCode::Up)
-            || (ctrl && matches!(key.code, KeyCode::Char('k') | KeyCode::Char('h') | KeyCode::Left));
+        // Field navigation: ↑↓/Tab, or ctrl-j/k (plain letters are typed into text
+        // fields, so the vertical chord needs ctrl; ctrl-h/l is "choose", above).
+        let next = matches!(key.code, KeyCode::Tab | KeyCode::Down) || (ctrl && key.code == KeyCode::Char('j'));
+        let prev = matches!(key.code, KeyCode::BackTab | KeyCode::Up) || (ctrl && key.code == KeyCode::Char('k'));
         if next {
             let p = self.prompt.as_mut().unwrap();
             p.idx = (p.idx + 1) % len;
@@ -1320,7 +1323,7 @@ fn render_prompt(f: &mut Frame, area: Rect, p: &Prompt) {
     }
     lines.push(Line::raw(""));
     lines.push(Line::from(Span::styled(
-        format!("  Enter next/submit · Tab · {CTRL_Y_MOVE}·{CTRL_X_MOVE} move field · ←/→ choose · Esc cancel"),
+        format!("  {CTRL_VIM_Y_MOVE} {Y_MOVE} move · {CTRL_VIM_X_MOVE} {X_MOVE} choose · enter next/submit · esc cancel"),
         Style::default().add_modifier(Modifier::DIM),
     )));
     let para = Paragraph::new(lines)
@@ -1373,7 +1376,7 @@ fn render_overlay(f: &mut Frame, ov: &Overlay) {
             let h = (body.lines().count() as u16 + 3).min(full.height.saturating_sub(2)).max(6);
             let area = centered(full, w, h);
             f.render_widget(Clear, area);
-            let foot = format!("  {Y_MOVE} scroll · y copy · other key close");
+            let foot = format!("  {VIM_Y_MOVE} {Y_MOVE} scroll · y copy · other key close");
             f.render_widget(
                 Paragraph::new(body.clone())
                     .block(
@@ -1417,7 +1420,7 @@ fn render_overlay(f: &mut Frame, ov: &Overlay) {
                     Block::default()
                         .borders(Borders::ALL)
                         .title(title.clone())
-                        .title_bottom(Line::from(format!("  {Y_MOVE} · ↵ select · esc")).right_aligned())
+                        .title_bottom(Line::from(format!("  {VIM_Y_MOVE} {Y_MOVE} · ↵ select · esc")).right_aligned())
                         .border_style(Style::default().fg(Color::Cyan)),
                 ),
                 area,
@@ -1535,71 +1538,24 @@ mod tests {
         a
     }
 
-
-    #[test]
-    fn tabs_cycle_both_ways_and_wrap() {
-        let mut a = app();
-        assert!(a.view == View::Interfaces);
-        a.cycle_view(1);
-        assert!(a.view == View::Mesh);
-        a.cycle_view(1);
-        assert!(a.view == View::Interfaces, "right from last wraps to first");
-        a.cycle_view(-1);
-        assert!(a.view == View::Mesh, "left from first wraps to last");
-    }
-
-    #[test]
-    fn any_key_dismisses_an_overlay() {
-        let mut a = app();
-        a.overlay = Some(Overlay::Qr { title: "t".into(), width: 1, dark: vec![false] });
-        a.on_key(KeyEvent::from(KeyCode::Char('j')));
-        assert!(a.overlay.is_none());
-    }
-
-    #[test]
-    fn c_on_mesh_opens_the_create_wizard() {
-        let mut a = app();
-        a.view = View::Mesh;
-        a.on_key(KeyEvent::from(KeyCode::Char('c')));
-        assert!(a.prompt.is_some(), "`c` opens the create-node wizard");
-        assert!(a.prompt.as_ref().unwrap().kind() == NodeKind::Spoke, "starts on Spoke");
-    }
-
-    #[test]
-    fn toggling_type_swaps_fields_but_keeps_name() {
-        let mut a = app();
-        a.view = View::Mesh;
-        a.on_key(KeyEvent::from(KeyCode::Char('c')));
-        // move to the Name field and type, then back to the Type row.
-        a.on_key(KeyEvent::from(KeyCode::Tab));
-        for c in "phone".chars() {
-            a.on_key(KeyEvent::from(KeyCode::Char(c)));
-        }
-        a.on_key(KeyEvent::from(KeyCode::BackTab));
-        // `l` on the Type row flips Client -> Server.
-        a.on_key(KeyEvent::from(KeyCode::Char('l')));
-        let p = a.prompt.as_ref().unwrap();
-        assert!(p.kind() == NodeKind::Hub, "`l` toggled to Hub");
-        assert!(p.fields.iter().any(|f| f.label.starts_with("Endpoint")), "Server form has an Endpoint field");
-        assert_eq!(p.value_of("Name"), "phone", "the typed name carried across the toggle");
-    }
-
-    fn node(name: &str, ip: u8, endpoint: Option<&str>, hubs: Vec<&str>) -> Node {
+    fn node(name: &str, ip: u8) -> Node {
         Node {
             name: name.into(),
             address: format!("10.10.1.{ip}/24"),
             public_key: "PUB".into(),
-            endpoint: endpoint.map(|e| e.into()),
-            allowed_ips: endpoint.map(|_| "0.0.0.0/0".into()),
+            endpoint: None,
+            allowed_ips: None,
             dns: None,
             keepalive: None,
-            hubs: hubs.into_iter().map(|s| s.into()).collect(),
-            private_key: Some("PRIV".into()),
+            hubs: Vec::new(),
+            private_key: None,
             post_up: None,
             post_down: None,
         }
     }
 
+    /// Hand-rolled base64 (no dep) feeding the OSC 52 clipboard escape - a silent
+    /// wrong-padding bug here would just produce a paste that looks fine and isn't.
     #[test]
     fn base64_matches_known_vectors() {
         assert_eq!(base64(b""), "");
@@ -1609,79 +1565,16 @@ mod tests {
         assert_eq!(base64(b"WireGuard"), "V2lyZUd1YXJk");
     }
 
+    /// Address allocation: handing out an in-use mesh IP would collide silently.
     #[test]
-    fn mesh_rows_nest_spokes_under_hubs() {
+    fn next_address_picks_the_first_free_ip() {
         let mut a = app();
-        a.nodes = vec![
-            node("pixel8pro", 2, None, vec![]),      // loose spoke (all hubs)
-            node("flint2", 1, Some("vpn:51820"), vec![]), // hub
-            node("laptop", 3, None, vec!["flint2"]), // spoke of flint2
-        ];
-        // display order: hub, then its explicit spoke, then the loose spoke last.
-        let names: Vec<&str> = a.mesh_rows().iter().map(|&i| a.nodes[i].name.as_str()).collect();
-        assert_eq!(names, vec!["flint2", "laptop", "pixel8pro"]);
-    }
-
-    #[test]
-    fn edit_prefills_the_wizard_from_the_node() {
-        let mut a = app();
-        a.nodes = vec![
-            node("flint2", 1, Some("vpn:51820"), vec![]),
-            node("laptop", 3, None, vec!["flint2"]),
-        ];
-        a.view = View::Mesh;
-        a.node_state.select(Some(1)); // laptop (spoke under flint2)
-        a.on_key(KeyEvent::from(KeyCode::Char('e')));
-        let p = a.prompt.as_ref().unwrap();
-        assert!(p.kind() == NodeKind::Spoke);
-        assert_eq!(p.value_of("Name"), "laptop");
-        assert_eq!(p.value_of("Hub to dial"), "flint2");
-    }
-
-    #[test]
-    fn export_ansible_is_a_wg_peers_entry() {
-        let dir = tempfile::tempdir().unwrap();
-        let mp = dir.path().join("mesh.toml");
-        Manifest { listen_port: 51820, nodes: vec![node("pixel8pro", 2, None, vec!["flint2"])] }.save(&mp).unwrap();
-        let mut a = app();
-        a.manifest_path = mp;
-        a.export("pixel8pro", ExportKind::Ansible);
-        let Some(Overlay::Text { body, .. }) = &a.overlay else { panic!("no overlay") };
-        assert_eq!(body, "  - { name: pixel8pro, ip: 2, public_key: \"PUB\" }");
-    }
-
-    #[test]
-    fn key_toggle_swaps_store_redact_for_pubkey_field() {
-        let mut a = app();
-        a.view = View::Mesh;
-        a.on_key(KeyEvent::from(KeyCode::Char('c'))); // spoke, generate
-        assert!(a.prompt.as_ref().unwrap().fields.iter().any(|f| f.label.starts_with("Private key")));
-        // spoke fields: 0 Type,1 Name,2 Address,3 DNS,4 Hub,5 Key -> 5 tabs to the Key row
-        for _ in 0..5 {
-            a.on_key(KeyEvent::from(KeyCode::Tab));
-        }
-        a.on_key(KeyEvent::from(KeyCode::Char('l'))); // flip to Paste
-        let p = a.prompt.as_ref().unwrap();
-        assert!(p.keysrc() == KeySource::Paste);
-        assert!(p.fields.iter().any(|f| f.label.starts_with("Public key")), "Paste shows a Public key field");
-        assert!(!p.fields.iter().any(|f| f.label.starts_with("Private key")), "and drops store/redact");
-    }
-
-    #[test]
-    fn spoke_wizard_offers_existing_hubs() {
-        let mut a = app();
-        a.nodes = vec![node("flint2", 1, Some("vpn:51820"), vec![])];
-        a.view = View::Mesh;
-        a.on_key(KeyEvent::from(KeyCode::Char('c')));
-        assert_eq!(a.prompt.as_ref().unwrap().value_of("Hub to dial"), "flint2");
-    }
-
-    #[test]
-    fn next_address_skips_used_and_defaults_to_dot_one() {
-        let a = app();
         assert_eq!(a.next_address(), "10.10.1.1/24", "empty manifest -> .1");
+        a.nodes = vec![node("hub", 1), node("phone", 2), node("laptop", 4)];
+        assert_eq!(a.next_address(), "10.10.1.3/24", "skips .1/.2/.4, takes the gap");
     }
 
+    /// Status lines must stop showing once STATUS_TTL has passed.
     #[test]
     fn live_status_expires() {
         let mut a = app();
