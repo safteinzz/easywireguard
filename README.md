@@ -1,5 +1,7 @@
 # easywireguard (`ewg`)
 
+> **Canonical:** [gitlab.com/safteinzz/easywireguard](https://gitlab.com/safteinzz/easywireguard) · **Mirror:** [github.com/safteinzz/easywireguard](https://github.com/safteinzz/easywireguard)
+
 WireGuard without the hand-editing. A tabbed TUI for humans and a flag-driven CLI
 for scripts/agents: manage live interfaces, generate **hub-and-spoke** or full-mesh
 configs from one manifest, and onboard devices by QR. Pure Rust — no `wg` binary
@@ -13,8 +15,10 @@ cargo install easywireguard   # the command you type is the shorter `ewg`
 
 Bare `ewg` opens a two-tab toolbox — `h/l ←→` switch tabs, `j/k ↑↓` move:
 
-- **Interfaces** — every `.conf` across your registered dirs; `↵`/`u`/`d` bring them
-  up/down, `i` inspects one.
+- **Interfaces** — every `.conf` across your registered dirs; `↵` brings one up/down,
+  `c` creates one in your `$EDITOR` (paste a provider config), `e` edits, `d` deletes it
+  (a `.bak` is kept), `b` toggles start-on-boot, `i` inspects it (with live `wg show`
+  when up).
 - **Mesh** — the nodes in a manifest, shown **hub-and-spoke** (spokes nested under
   their hub). Per node: `c` create, `e` edit, `R` rotate keys, `d` delete, `E` export,
   `↵` show its QR, `i` view its generated `.conf`.

@@ -16,6 +16,9 @@ pub const DEFAULT_DIR: &str = "/etc/wireguard";
 pub struct Iface {
     pub name: String,
     pub up: bool,
+    /// Whether `wg-quick@<name>` is enabled at boot, per systemd. `None` when we
+    /// can't tell (no systemctl) so the UI hides the state instead of lying.
+    pub enabled: Option<bool>,
     pub path: PathBuf,
 }
 
@@ -48,6 +51,7 @@ pub fn interfaces(dirs: &[PathBuf]) -> Result<Vec<Iface>> {
                 found.entry(name.to_string()).or_insert_with(|| Iface {
                     name: name.to_string(),
                     up: active.contains(name),
+                    enabled: boot_enabled(name),
                     path: path.clone(),
                 });
             }
@@ -120,6 +124,126 @@ fn wg_quick(action: &str, config: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Live `wg show <name>` for an up interface: peers, latest handshake, transfer.
+/// The single most useful "is it actually working" readout, shown in inspect.
+pub fn show(name: &str) -> Result<String> {
+    let out = Command::new("wg")
+        .args(["show", name])
+        .output()
+        .context("running `wg` (install wireguard-tools)")?;
+    if !out.status.success() {
+        bail!("`wg show {name}` failed: {}", String::from_utf8_lossy(&out.stderr).trim());
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+/// Whether `wg-quick@<name>` is enabled to start at boot. `None` when we can't ask
+/// (no systemd / `systemctl` not on PATH), so callers hide the state rather than
+/// claim "disabled". Only a plain `enabled` counts as on.
+pub fn boot_enabled(name: &str) -> Option<bool> {
+    let out = Command::new("systemctl")
+        .args(["is-enabled", &format!("wg-quick@{name}")])
+        .output()
+        .ok()?;
+    Some(String::from_utf8_lossy(&out.stdout).trim() == "enabled")
+}
+
+/// Enable or disable `wg-quick@<name>` at boot via systemd. Needs root + systemd;
+/// the error says so rather than leaking a raw systemctl message.
+pub fn set_boot(name: &str, enable: bool) -> Result<()> {
+    let action = if enable { "enable" } else { "disable" };
+    let out = Command::new("systemctl")
+        .arg(action)
+        .arg(format!("wg-quick@{name}"))
+        .output()
+        .context("running `systemctl` (need systemd)")?;
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        let reason = stderr.lines().last().unwrap_or("").trim();
+        bail!("`systemctl {action} wg-quick@{name}` failed: {reason}");
+    }
+    Ok(())
+}
+
+/// Parse a wg config into `(section-header, [(key, value)])`, comments and blank
+/// lines dropped. Deliberately lenient: unknown keys and provider-specific extras
+/// are kept, since we only sanity-check structure, never rewrite the file.
+fn sections(text: &str) -> Vec<(String, Vec<(String, String)>)> {
+    let mut out: Vec<(String, Vec<(String, String)>)> = Vec::new();
+    for raw in text.lines() {
+        let line = raw.split('#').next().unwrap_or("").trim();
+        if line.is_empty() {
+            continue;
+        }
+        if line.starts_with('[') && line.ends_with(']') {
+            out.push((line.to_string(), Vec::new()));
+        } else if let Some((k, v)) = line.split_once('=')
+            && let Some((_, kvs)) = out.last_mut()
+        {
+            kvs.push((k.trim().to_string(), v.trim().to_string()));
+        }
+    }
+    out
+}
+
+/// Structurally validate a WireGuard config before we save it, so a create/edit
+/// catches an empty or malformed paste instead of writing a `.conf` that only
+/// fails later at `wg-quick up`. Checks the essentials (an `[Interface]` with a
+/// valid `PrivateKey` and an `Address`, and at least one `[Peer]` with a valid
+/// `PublicKey`) and stays lenient about everything else. Errors are ready to show.
+pub fn validate_config(text: &str) -> Result<()> {
+    if text.trim().is_empty() {
+        bail!("the config is empty - paste or write one (or clear it to cancel)");
+    }
+    let secs = sections(text);
+    let get = |kvs: &[(String, String)], key: &str| {
+        kvs.iter().find(|(k, _)| k.eq_ignore_ascii_case(key)).map(|(_, v)| v.trim().to_string()).filter(|v| !v.is_empty())
+    };
+    let Some((_, iface)) = secs.iter().find(|(h, _)| h.eq_ignore_ascii_case("[Interface]")) else {
+        bail!("no `[Interface]` section - is this a WireGuard config?");
+    };
+    match get(iface, "PrivateKey") {
+        None => bail!("`[Interface]` is missing a `PrivateKey`"),
+        Some(k) if !crate::keys::is_wg_key(&k) => bail!("`PrivateKey` is not a valid WireGuard key (expected 44-char base64)"),
+        _ => {}
+    }
+    if get(iface, "Address").is_none() {
+        bail!("`[Interface]` is missing an `Address` (the interface IP, e.g. 10.0.0.2/24)");
+    }
+    let peers: Vec<_> = secs.iter().filter(|(h, _)| h.eq_ignore_ascii_case("[Peer]")).collect();
+    if peers.is_empty() {
+        bail!("no `[Peer]` section - add the server/hub this connects to");
+    }
+    for (_, kvs) in &peers {
+        match get(kvs, "PublicKey") {
+            None => bail!("a `[Peer]` is missing a `PublicKey`"),
+            Some(k) if !crate::keys::is_wg_key(&k) => bail!("a `[Peer]` `PublicKey` is not a valid WireGuard key"),
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+/// Validate a `.conf` stem, which `wg-quick` uses verbatim as the kernel interface
+/// name: 1..=15 bytes and only chars `ip link` accepts. Returns a ready-to-show
+/// lowercase error that names the fix, so a bad name is caught here, not as a raw
+/// `wg-quick` failure later.
+pub fn valid_iface_name(name: &str) -> Result<()> {
+    if name.is_empty() {
+        bail!("an interface name is required");
+    }
+    if name.len() > 15 {
+        bail!("`{name}` is too long - interface names are 15 characters max");
+    }
+    if name == "." || name == ".." {
+        bail!("`{name}` is not a usable interface name");
+    }
+    if let Some(bad) = name.chars().find(|c| !(c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '@'))) {
+        bail!("`{name}` has an invalid character `{bad}` - use letters, digits, `-` `_` `.` `@`");
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -170,6 +294,40 @@ mod tests {
 
         let e = find(&dirs, "nope").unwrap_err().to_string();
         assert!(e.contains("ewg dir add"), "got: {e}");
+    }
+
+    #[test]
+    fn valid_iface_name_accepts_and_rejects() {
+        assert!(valid_iface_name("wg0").is_ok());
+        assert!(valid_iface_name("wg-home_1.a@b").is_ok());
+        assert!(valid_iface_name("").is_err(), "empty is rejected");
+        assert!(valid_iface_name("a/b").is_err(), "slash is rejected");
+        assert!(valid_iface_name("has space").is_err(), "whitespace is rejected");
+        assert!(valid_iface_name("0123456789abcdef").is_err(), "16 chars is too long");
+        assert!(valid_iface_name("..").is_err(), "dot-dot is rejected");
+    }
+
+    #[test]
+    fn validate_config_accepts_a_real_config_and_flags_problems() {
+        // A known-good key pair (from the keys tests) keeps the base64 checks honest.
+        let priv_k = "wFW7oUjIpLCfZW2UwsfTlLDGrZb9iJH3bK6nosB5IGI=";
+        let pub_k = "obuvsSP3vVFDjzrcwCWqgLmZeqEEVBGHIqzX3v4hYHA=";
+        let good = format!(
+            "[Interface]\nPrivateKey = {priv_k}\nAddress = 10.0.0.2/24\n\n[Peer]\nPublicKey = {pub_k}\nEndpoint = vpn.example:51820\nAllowedIPs = 0.0.0.0/0\n"
+        );
+        assert!(validate_config(&good).is_ok(), "a complete config is accepted");
+
+        assert!(validate_config("   \n").unwrap_err().to_string().contains("empty"));
+        assert!(validate_config("PrivateKey = x\n").unwrap_err().to_string().contains("[Interface]"));
+
+        let no_priv = format!("[Interface]\nAddress = 10.0.0.2/24\n\n[Peer]\nPublicKey = {pub_k}\n");
+        assert!(validate_config(&no_priv).unwrap_err().to_string().contains("PrivateKey"));
+
+        let bad_priv = format!("[Interface]\nPrivateKey = not-a-key\nAddress = 10.0.0.2/24\n\n[Peer]\nPublicKey = {pub_k}\n");
+        assert!(validate_config(&bad_priv).unwrap_err().to_string().contains("valid WireGuard key"));
+
+        let no_peer = format!("[Interface]\nPrivateKey = {priv_k}\nAddress = 10.0.0.2/24\n");
+        assert!(validate_config(&no_peer).unwrap_err().to_string().contains("[Peer]"));
     }
 
     #[test]

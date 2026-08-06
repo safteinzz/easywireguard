@@ -39,6 +39,12 @@ fn clamp(b: &mut [u8; 32]) {
     b[31] |= 64;
 }
 
+/// Whether `s` is a well-formed WireGuard key: base64 of exactly 32 bytes. Used
+/// to catch a fat-fingered paste before it becomes a broken `.conf`.
+pub fn is_wg_key(s: &str) -> bool {
+    decode_key(s).is_ok()
+}
+
 fn decode_key(s: &str) -> Result<[u8; 32]> {
     let v = STANDARD
         .decode(s.trim())

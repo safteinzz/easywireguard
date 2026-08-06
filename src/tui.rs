@@ -1,8 +1,10 @@
 //! The toolbox - bare `ewg`. Two tabs (Interfaces / Mesh), switched with
 //! `h/l ←→` or Tab, navigated with `j/k ↑↓` like a normal list:
 //!
-//! - **Interfaces** - the `.conf` files across your registered dirs; up/down them,
-//!   `i` inspects one.
+//! - **Interfaces** - the `.conf` files across your registered dirs; `↵` toggles one
+//!   up/down, `c` creates one in `$EDITOR` (paste a provider config), `e` edits, `d`
+//!   deletes it (a `.bak` is kept), `b` toggles start-on-boot, `i` inspects it (with
+//!   live `wg show` when up).
 //! - **Mesh** - the nodes in a manifest, shown hub-and-spoke (spokes nested under
 //!   their hub). `c` creates one (a Spoke/Hub wizard that generates keys and pops a
 //!   QR to scan), `↵` shows a node's QR, `i` inspects its generated config, `d`
@@ -22,7 +24,7 @@ use ratatui::crossterm::{
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Tabs, Wrap};
 use std::io::{Write, stdout};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -63,7 +65,7 @@ impl View {
     }
     fn hints(self) -> String {
         match self {
-            View::Interfaces => format!("{VIM_Y_MOVE} {Y_MOVE} move · {VIM_X_MOVE} {X_MOVE} tab · u up · d down · ↵ toggle · i inspect · r refresh · q quit"),
+            View::Interfaces => format!("{VIM_Y_MOVE} {Y_MOVE} move · {VIM_X_MOVE} {X_MOVE} tab · ↵ toggle · c new · e edit · d del · b boot · i inspect · r refresh · q quit"),
             View::Mesh => format!("{VIM_Y_MOVE} {Y_MOVE} move · {VIM_X_MOVE} {X_MOVE} tab · c create · e edit · R rotate · d del · E export · ↵ QR · i view · g gen · r reload · q quit"),
         }
     }
@@ -75,8 +77,20 @@ impl View {
 enum Overlay {
     Qr { title: String, width: usize, dark: Vec<bool> },
     Text { title: String, body: String, scroll: u16 },
-    Confirm { prompt: String, name: String },
+    Confirm { prompt: String, action: ConfirmAction },
     Menu { title: String, name: String, items: Vec<(String, ExportKind)>, idx: usize },
+    /// The saved buffer failed validation. Shows the reason and lets the user
+    /// choose: correct (reopen the editor on the same content) or discard it.
+    Invalid { reason: String, content: String, original: Option<PathBuf>, was_up: bool },
+}
+
+/// What a `y`/Enter on a Confirm overlay carries out.
+#[derive(Clone)]
+enum ConfirmAction {
+    /// Remove a node from the mesh manifest.
+    DeleteNode(String),
+    /// Delete an interface `.conf` from disk (a `.bak` is kept first).
+    DeleteIface(PathBuf),
 }
 
 /// Ways to export a node from the Export menu.
@@ -177,6 +191,24 @@ impl Field {
 enum Action {
     AddNode,
     EditNode { original: String },
+    /// Write an edited interface config to `<name>.conf`. `content` is the buffer
+    /// the user saved in `$EDITOR`; `original` is the file being edited (None on
+    /// create); `was_up` guards a rename of a live interface.
+    SaveConf { content: String, original: Option<PathBuf>, was_up: bool },
+}
+
+/// A pending request to suspend the TUI, run `$EDITOR` on a temp file, and resume.
+/// Built when `c`/`e` is pressed; consumed by the event loop, which owns the
+/// terminal, then handed back to `App::editor_done`.
+struct EditorReq {
+    tmp: PathBuf,
+    original: Option<PathBuf>,
+    was_up: bool,
+    /// Exactly what we wrote to `tmp` before opening the editor. If the buffer
+    /// comes back identical, the user saved nothing (`:q!`, or `:wq` on the
+    /// untouched seed), so we treat it as a cancel - and it's the guaranteed way
+    /// out of the fix-and-resave loop when a config keeps failing validation.
+    seed: String,
 }
 
 /// A modal wizard: a titled stack of fields plus the action to run on submit.
@@ -353,6 +385,9 @@ struct App {
 
     prompt: Option<Prompt>,
     overlay: Option<Overlay>,
+
+    /// Set when a create/edit needs `$EDITOR`; the event loop drains it.
+    pending_editor: Option<EditorReq>,
 }
 
 impl App {
@@ -372,6 +407,7 @@ impl App {
             node_state: ListState::default(),
             prompt: None,
             overlay: None,
+            pending_editor: None,
         };
         app.clamp_all();
         app
@@ -492,9 +528,11 @@ impl App {
         if self.overlay.is_some() {
             // Text pager: j/k scroll, else close. QR: any key closes. Confirm: y deletes.
             let mut close = false;
-            let mut confirm: Option<String> = None;
+            let mut confirm: Option<ConfirmAction> = None;
             let mut do_export: Option<(String, ExportKind)> = None;
             let mut yank: Option<String> = None;
+            let mut reopen: Option<(String, Option<PathBuf>, bool)> = None;
+            let mut discarded = false;
             match self.overlay.as_mut().unwrap() {
                 Overlay::Text { scroll, body, .. } => match key.code {
                     KeyCode::Down | KeyCode::Char('j') => *scroll = scroll.saturating_add(1),
@@ -503,9 +541,9 @@ impl App {
                     _ => close = true,
                 },
                 Overlay::Qr { .. } => close = true,
-                Overlay::Confirm { name, .. } => {
+                Overlay::Confirm { action, .. } => {
                     if matches!(key.code, KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter) {
-                        confirm = Some(name.clone());
+                        confirm = Some(action.clone());
                     }
                     close = true; // any key dismisses the confirm
                 }
@@ -519,6 +557,21 @@ impl App {
                     KeyCode::Esc | KeyCode::Char('q') => close = true,
                     _ => {}
                 },
+                Overlay::Invalid { content, original, was_up, .. } => {
+                    match key.code {
+                        KeyCode::Char('e') | KeyCode::Char('c') | KeyCode::Enter => reopen = Some((content.clone(), original.clone(), *was_up)),
+                        _ => discarded = true, // d / esc / any other key throws it away
+                    }
+                    close = true;
+                }
+            }
+            if discarded {
+                self.set_status("discarded");
+            }
+            if let Some((content, original, was_up)) = reopen {
+                self.overlay = None;
+                self.reopen_editor(content, original, was_up);
+                return;
             }
             if let Some(text) = yank {
                 // keep the box open so "copied" shows while it's still on screen
@@ -526,9 +579,12 @@ impl App {
                     Some(tool) => self.set_status(format!("copied to clipboard ({tool})")),
                     None => self.set_status("no clipboard tool - install wl-clipboard or xclip"),
                 }
-            } else if let Some(name) = confirm {
+            } else if let Some(action) = confirm {
                 self.overlay = None;
-                self.delete_node(&name);
+                match action {
+                    ConfirmAction::DeleteNode(name) => self.delete_node(&name),
+                    ConfirmAction::DeleteIface(path) => self.delete_iface(path),
+                }
             } else if let Some((name, kind)) = do_export {
                 self.overlay = None;
                 self.export(&name, kind);
@@ -560,31 +616,186 @@ impl App {
     }
 
     fn interfaces_key(&mut self, key: KeyEvent) {
-        let path = self.iface_state.selected().and_then(|i| self.ifaces.get(i)).map(|i| i.path.clone());
         match key.code {
-            KeyCode::Char('u') => {
-                let m = act(path, true);
-                self.reload(m);
-            }
-            KeyCode::Char('d') => {
-                let m = act(path, false);
-                self.reload(m);
-            }
             KeyCode::Enter => {
-                let up = self.iface_state.selected().and_then(|i| self.ifaces.get(i)).map(|i| !i.up).unwrap_or(false);
+                let sel = self.selected_iface();
+                let (path, up) = match sel {
+                    Some(i) => (Some(i.path.clone()), !i.up),
+                    None => (None, false),
+                };
                 let m = act(path, up);
                 self.reload(m);
             }
-            KeyCode::Char('i') => match &path {
-                Some(p) => match std::fs::read_to_string(p) {
-                    Ok(text) => self.overlay = Some(Overlay::Text { title: format!(" {} ", p.display()), body: text, scroll: 0 }),
-                    Err(e) => self.set_status(format!("can't read {}: {e}", p.display())),
-                },
-                None => self.set_status("no interface selected"),
-            },
+            KeyCode::Char('c') => self.start_create_conf(),
+            KeyCode::Char('e') => self.start_edit_conf(),
+            KeyCode::Char('d') => self.confirm_delete_iface(),
+            KeyCode::Char('b') => self.toggle_boot(),
+            KeyCode::Char('i') => self.inspect_iface(),
             KeyCode::Char('r') => self.reload("refreshed"),
             _ => {}
         }
+    }
+
+    /// The interface selected in the list, if any.
+    fn selected_iface(&self) -> Option<&Iface> {
+        self.iface_state.selected().and_then(|i| self.ifaces.get(i))
+    }
+
+    /// Re-select the interface named `name` after a reload (best effort).
+    fn select_iface(&mut self, name: &str) {
+        if let Some(i) = self.ifaces.iter().position(|f| f.name == name) {
+            self.iface_state.select(Some(i));
+        }
+    }
+
+    /// Suggest the next free `wgN` interface name from those already present.
+    fn next_iface_name(&self) -> String {
+        let used: std::collections::BTreeSet<&str> = self.ifaces.iter().map(|i| i.name.as_str()).collect();
+        (0..=254).map(|n| format!("wg{n}")).find(|c| !used.contains(c.as_str())).unwrap_or_else(|| "wg0".into())
+    }
+
+    /// Start creating an interface: seed a temp file with a skeleton and ask the
+    /// event loop to open `$EDITOR` on it. On save we prompt for the name.
+    fn start_create_conf(&mut self) {
+        const SKELETON: &str = "[Interface]\n# Paste your provider's config over this, or fill it in.\nPrivateKey = \nAddress = \n# DNS = 1.1.1.1\n\n[Peer]\nPublicKey = \n# PresharedKey = \nEndpoint = \nAllowedIPs = 0.0.0.0/0\n";
+        match write_temp(SKELETON) {
+            Ok(tmp) => self.pending_editor = Some(EditorReq { tmp, original: None, was_up: false, seed: SKELETON.to_string() }),
+            Err(e) => self.set_status(format!("can't open an editor buffer: {e}")),
+        }
+    }
+
+    /// Start editing the selected interface: seed the temp file with its current
+    /// contents and open `$EDITOR`. On save we prompt for the name (rename-aware).
+    fn start_edit_conf(&mut self) {
+        let Some(iface) = self.selected_iface().cloned() else {
+            self.set_status("no interface selected");
+            return;
+        };
+        let content = match std::fs::read_to_string(&iface.path) {
+            Ok(t) => t,
+            Err(e) => {
+                self.set_status(format!("can't read {}: {e}", iface.path.display()));
+                return;
+            }
+        };
+        match write_temp(&content) {
+            Ok(tmp) => self.pending_editor = Some(EditorReq { tmp, original: Some(iface.path.clone()), was_up: iface.up, seed: content }),
+            Err(e) => self.set_status(format!("can't open an editor buffer: {e}")),
+        }
+    }
+
+    /// Called by the event loop once `$EDITOR` has exited. Saving nothing (buffer
+    /// unchanged from the seed, or emptied) cancels. Otherwise the config is
+    /// validated: a valid one goes to the name prompt; an invalid one pops a dialog
+    /// naming the problem, so the user decides whether to fix it or throw it away.
+    fn editor_done(&mut self, req: EditorReq) {
+        let content = std::fs::read_to_string(&req.tmp).unwrap_or_default();
+        let _ = std::fs::remove_file(&req.tmp);
+        if content == req.seed || content.trim().is_empty() {
+            self.set_status(if req.original.is_some() { "no changes - nothing saved" } else { "nothing saved" });
+            return;
+        }
+        match wg::validate_config(&content) {
+            Ok(()) => self.open_conf_name_prompt(content, req.original, req.was_up),
+            Err(e) => {
+                self.overlay = Some(Overlay::Invalid { reason: e.to_string(), content, original: req.original, was_up: req.was_up })
+            }
+        }
+    }
+
+    /// Reopen `$EDITOR` on `content` (the "correct" choice from the invalid dialog).
+    fn reopen_editor(&mut self, content: String, original: Option<PathBuf>, was_up: bool) {
+        match write_temp(&content) {
+            Ok(tmp) => self.pending_editor = Some(EditorReq { tmp, original, was_up, seed: content }),
+            Err(e) => self.set_status(format!("can't reopen editor: {e}")),
+        }
+    }
+
+    /// The name prompt shown after the editor: a Name field prefilled with the
+    /// existing name (edit) or the next free `wgN` (create), plus a Directory
+    /// picker when creating with more than one registered dir.
+    fn open_conf_name_prompt(&mut self, content: String, original: Option<PathBuf>, was_up: bool) {
+        let default_name = original.as_deref().map(stem).unwrap_or_else(|| self.next_iface_name());
+        let mut name = Field::new("Name (.conf interface name)", "");
+        name.value = default_name;
+        let mut fields = vec![name];
+        if original.is_none() && self.dirs.len() > 1 {
+            let opts: Vec<String> = self.dirs.iter().map(|d| d.display().to_string()).collect();
+            fields.push(Field::pick("Directory", opts));
+        }
+        let title = if original.is_some() { "Save interface".to_string() } else { "Name the interface".to_string() };
+        self.prompt = Some(Prompt { title, fields, idx: 0, action: Action::SaveConf { content, original, was_up } });
+    }
+
+    /// Confirm-gate deleting the selected interface. Refuses while it is up: the
+    /// running interface must be brought down (its `.conf` is what downs it) first.
+    fn confirm_delete_iface(&mut self) {
+        let Some(iface) = self.selected_iface() else {
+            self.set_status("no interface selected");
+            return;
+        };
+        if iface.up {
+            self.set_status(format!("`{}` is up - toggle it down (↵) before deleting", iface.name));
+            return;
+        }
+        let name = iface.name.clone();
+        let path = iface.path.clone();
+        self.overlay = Some(Overlay::Confirm { prompt: format!(" delete `{name}.conf`?  (a .bak is kept)  y / n "), action: ConfirmAction::DeleteIface(path) });
+    }
+
+    /// Back up then delete an interface `.conf`, and refresh the list.
+    fn delete_iface(&mut self, path: PathBuf) {
+        backup(&path);
+        match std::fs::remove_file(&path) {
+            Ok(()) => {
+                let name = stem(&path);
+                self.reload(format!("deleted `{name}.conf` (.bak kept)"));
+            }
+            Err(e) => self.set_status(format!("can't delete {}: {e} (need sudo ewg?)", path.display())),
+        }
+    }
+
+    /// Toggle whether the selected interface starts on boot (systemd).
+    fn toggle_boot(&mut self) {
+        let Some(iface) = self.selected_iface().cloned() else {
+            self.set_status("no interface selected");
+            return;
+        };
+        match iface.enabled {
+            None => self.set_status("can't manage boot state - systemd/systemctl not available"),
+            Some(enabled) => match wg::set_boot(&iface.name, !enabled) {
+                Ok(()) => {
+                    let name = iface.name.clone();
+                    self.reload(format!("`{name}` will {} start on boot", if enabled { "no longer" } else { "now" }));
+                    self.select_iface(&name);
+                }
+                Err(e) => self.set_status(format!("{e} (need sudo ewg?)")),
+            },
+        }
+    }
+
+    /// Inspect the selected interface: its `.conf`, plus a live `wg show` readout
+    /// appended when the interface is up (handshakes, transfer, peers).
+    fn inspect_iface(&mut self) {
+        let Some(iface) = self.selected_iface().cloned() else {
+            self.set_status("no interface selected");
+            return;
+        };
+        let mut body = match std::fs::read_to_string(&iface.path) {
+            Ok(t) => t,
+            Err(e) => {
+                self.set_status(format!("can't read {}: {e}", iface.path.display()));
+                return;
+            }
+        };
+        if iface.up
+            && let Ok(live) = wg::show(&iface.name)
+            && !live.trim().is_empty()
+        {
+            body.push_str("\n# ---- live (wg show) ----\n");
+            body.push_str(&live);
+        }
+        self.overlay = Some(Overlay::Text { title: format!(" {} ", iface.path.display()), body, scroll: 0 });
     }
 
     fn mesh_key(&mut self, key: KeyEvent) {
@@ -622,7 +833,7 @@ impl App {
                     self.set_status("no node selected");
                     return;
                 };
-                self.overlay = Some(Overlay::Confirm { prompt: format!(" delete `{name}` from mesh.toml?  y / n "), name });
+                self.overlay = Some(Overlay::Confirm { prompt: format!(" delete `{name}` from mesh.toml?  y / n "), action: ConfirmAction::DeleteNode(name) });
             }
             KeyCode::Enter => {
                 let Some(name) = self.selected_mesh_node().map(|n| n.name.clone()) else {
@@ -795,7 +1006,56 @@ impl App {
         };
         match prompt.action {
             Action::AddNode | Action::EditNode { .. } => self.submit_node(prompt),
+            Action::SaveConf { .. } => self.submit_conf(prompt),
         }
+    }
+
+    /// Write the edited interface config to `<name>.conf`. Backs up any file it
+    /// overwrites; on a rename it also backs up and removes the old file, but
+    /// refuses to rename a live interface (the running one would strand under its
+    /// old name). Validation errors put the prompt back so the name can be fixed.
+    fn submit_conf(&mut self, prompt: Prompt) {
+        let (content, original, was_up) = match &prompt.action {
+            Action::SaveConf { content, original, was_up } => (content.clone(), original.clone(), *was_up),
+            _ => return,
+        };
+        let name = prompt.value_of("Name");
+        if let Err(e) = wg::valid_iface_name(&name) {
+            self.set_status(e.to_string());
+            self.prompt = Some(prompt);
+            return;
+        }
+        // Target dir: the picker if present, else the edited file's dir, else the
+        // first registered dir.
+        let dir: PathBuf = if prompt.fields.iter().any(|f| f.label.starts_with("Directory")) {
+            PathBuf::from(prompt.value_of("Directory"))
+        } else if let Some(orig) = &original {
+            orig.parent().map(Path::to_path_buf).unwrap_or_else(|| PathBuf::from("."))
+        } else {
+            self.dirs.first().cloned().unwrap_or_else(|| PathBuf::from("."))
+        };
+        let target = dir.join(format!("{name}.conf"));
+
+        let renaming = original.as_ref().is_some_and(|o| *o != target);
+        if renaming && was_up {
+            self.set_status(format!("take `{}` down (↵) before renaming it", stem(original.as_ref().unwrap())));
+            self.prompt = Some(prompt);
+            return;
+        }
+        backup(&target); // keep any file we're about to clobber
+        if let Err(e) = std::fs::write(&target, &content) {
+            self.set_status(format!("can't write {}: {e} (need sudo ewg?)", target.display()));
+            self.prompt = Some(prompt);
+            return;
+        }
+        if renaming && let Some(orig) = &original {
+            backup(orig);
+            let _ = std::fs::remove_file(orig);
+        }
+        let verb = if original.is_some() { "saved" } else { "created" };
+        let tail = if was_up && !renaming { " - toggle (↵) to apply" } else { "" };
+        self.reload(format!("{verb} {}{tail}", target.display()));
+        self.select_iface(&name);
     }
 
     /// Turn a completed create/edit wizard into a manifest entry. The manifest is
@@ -805,7 +1065,7 @@ impl App {
     fn submit_node(&mut self, prompt: Prompt) {
         let original = match &prompt.action {
             Action::EditNode { original } => Some(original.clone()),
-            Action::AddNode => None,
+            Action::AddNode | Action::SaveConf { .. } => None,
         };
         let editing = original.is_some();
         // Read every field up front (owned Strings) so `prompt` is free to move.
@@ -1085,6 +1345,34 @@ fn write_conf(name: &str, cfg: &str) -> String {
     }
 }
 
+/// The file stem of `path` (the interface name for a `<name>.conf`).
+fn stem(path: &Path) -> String {
+    path.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string()
+}
+
+/// A temp file seeded with `content` for `$EDITOR` to open, with a `.conf`
+/// extension so the editor highlights it. One per process is enough (edits are
+/// sequential); the caller removes it once read back.
+fn write_temp(content: &str) -> std::io::Result<PathBuf> {
+    let mut p = std::env::temp_dir();
+    p.push(format!("ewg-edit-{}.conf", std::process::id()));
+    std::fs::write(&p, content)?;
+    Ok(p)
+}
+
+/// Back up `path` to `<path>.bak.<epoch>` if it exists, so a clobber or delete is
+/// recoverable. Returns the backup path, or None when there was nothing to copy.
+fn backup(path: &Path) -> Option<PathBuf> {
+    if !path.exists() {
+        return None;
+    }
+    let epoch = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    let mut bak = path.as_os_str().to_os_string();
+    bak.push(format!(".bak.{epoch}"));
+    let bak = PathBuf::from(bak);
+    std::fs::copy(path, &bak).ok().map(|_| bak)
+}
+
 /// Bring the interface at `path` up or down, returning a status line.
 fn act(path: Option<PathBuf>, up: bool) -> String {
     let Some(path) = path else {
@@ -1128,6 +1416,42 @@ fn event_loop<B: Backend>(terminal: &mut Terminal<B>, dirs: &[PathBuf]) -> Resul
             && key.kind == KeyEventKind::Press
         {
             app.on_key(key);
+        }
+        // A create/edit asked for $EDITOR: suspend the TUI, run it, resume.
+        if let Some(req) = app.pending_editor.take() {
+            run_editor(terminal, &mut app, req)?;
+        }
+    }
+    Ok(())
+}
+
+/// Suspend the TUI (restore the terminal so the editor owns it), run `$EDITOR`
+/// (`$VISUAL`, then `$EDITOR`, then `vi`) on the temp file, then resume the TUI
+/// and hand the result back to the app. Under sudo, `$EDITOR` may not survive the
+/// re-exec, so `vi` is the floor; `sudo -E ewg` carries it through.
+fn run_editor<B: Backend>(terminal: &mut Terminal<B>, app: &mut App, req: EditorReq) -> Result<()> {
+    let enhanced = supports_keyboard_enhancement().unwrap_or(false);
+    if enhanced {
+        let _ = execute!(stdout(), PopKeyboardEnhancementFlags);
+    }
+    disable_raw_mode()?;
+    execute!(stdout(), LeaveAlternateScreen)?;
+
+    let editor = std::env::var_os("VISUAL").or_else(|| std::env::var_os("EDITOR")).unwrap_or_else(|| "vi".into());
+    let status = Command::new(&editor).arg(&req.tmp).status();
+
+    enable_raw_mode()?;
+    execute!(stdout(), EnterAlternateScreen)?;
+    if enhanced {
+        let _ = execute!(stdout(), PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES));
+    }
+    terminal.clear()?; // the editor scribbled over our screen; force a full redraw
+
+    match status {
+        Ok(_) => app.editor_done(req),
+        Err(e) => {
+            let _ = std::fs::remove_file(&req.tmp);
+            app.set_status(format!("couldn't launch editor `{}`: {e}", editor.to_string_lossy()));
         }
     }
     Ok(())
@@ -1183,10 +1507,16 @@ fn render_body(f: &mut Frame, area: Rect, app: &mut App) {
                     } else {
                         ("○ down", dim)
                     };
+                    let boot = if i.enabled == Some(true) {
+                        Span::styled("  ⏻ boot", Style::default().fg(Color::Yellow))
+                    } else {
+                        Span::raw("")
+                    };
                     ListItem::new(Line::from(vec![
                         Span::styled(mark, mstyle),
                         Span::raw("  "),
                         Span::styled(format!("{:w$}", i.name), bold),
+                        boot,
                     ]))
                 })
                 .collect();
@@ -1397,6 +1727,20 @@ fn render_overlay(f: &mut Frame, ov: &Overlay) {
             f.render_widget(
                 Paragraph::new(prompt.clone())
                     .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(Color::Red))),
+                area,
+            );
+        }
+        Overlay::Invalid { reason, .. } => {
+            let full = f.area();
+            let body = format!("This config is not valid:\n\n{reason}\n\ne / ↵  correct (reopen editor)\nd / esc  discard");
+            let w = 64.min(full.width.saturating_sub(4)).max(28);
+            let h = (body.lines().count() as u16 + 4).min(full.height.saturating_sub(2)).max(7);
+            let area = centered(full, w, h);
+            f.render_widget(Clear, area);
+            f.render_widget(
+                Paragraph::new(body)
+                    .block(Block::default().borders(Borders::ALL).title(" invalid config ").border_style(Style::default().fg(Color::Yellow)))
+                    .wrap(Wrap { trim: false }),
                 area,
             );
         }
