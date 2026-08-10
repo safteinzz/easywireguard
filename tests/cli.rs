@@ -75,6 +75,30 @@ endpoint = "vpn-c.example.com:51820"
 "#;
 
 #[test]
+fn check_reports_ok_and_fails_on_a_broken_config() {
+    let s = Sandbox::new();
+    // A complete config with a known-good key pair -> ok, exit 0.
+    let good = "[Interface]\n\
+        PrivateKey = wFW7oUjIpLCfZW2UwsfTlLDGrZb9iJH3bK6nosB5IGI=\n\
+        Address = 10.0.0.2/24\n\n\
+        [Peer]\n\
+        PublicKey = obuvsSP3vVFDjzrcwCWqgLmZeqEEVBGHIqzX3v4hYHA=\n\
+        Endpoint = vpn.example:51820\n\
+        AllowedIPs = 0.0.0.0/0\n";
+    s.write("good.conf", good);
+    let out = s.ok(&["check", "good.conf"]);
+    assert!(out.contains("good.conf") && out.contains("ok"), "got: {out}");
+
+    // Missing PrivateKey -> exit non-zero, reason on stderr.
+    s.write("bad.conf", "[Interface]\nAddress = 10.0.0.2/24\n\n[Peer]\nPublicKey = obuvsSP3vVFDjzrcwCWqgLmZeqEEVBGHIqzX3v4hYHA=\n");
+    let err = s.fails(&["check", "bad.conf"]);
+    assert!(err.contains("PrivateKey"), "got: {err}");
+
+    // A batch with one bad file still fails overall.
+    s.fails(&["check", "good.conf", "bad.conf"]);
+}
+
+#[test]
 fn key_prints_a_matching_pair() {
     let s = Sandbox::new();
     let out = s.ok(&["key"]);

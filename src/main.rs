@@ -87,6 +87,16 @@ enum Cmd {
         out: Option<PathBuf>,
     },
 
+    /// Validate WireGuard configs, exit non-zero if any is broken  <PATH>...
+    ///   ewg check ~/wg/home.conf
+    ///   ewg check /etc/wireguard/*.conf   # sanity-check a whole dir in CI
+    #[command(verbatim_doc_comment)]
+    Check {
+        /// One or more `.conf` files to validate
+        #[arg(required = true)]
+        paths: Vec<PathBuf>,
+    },
+
     /// Update ewg to the latest release
     ///   -y   skip the confirm prompt
     #[command(verbatim_doc_comment)]
@@ -227,6 +237,7 @@ fn main() -> Result<()> {
             manifest,
             out,
         }) => cmd_qr(&target, &manifest, out.as_deref()),
+        Some(Cmd::Check { paths }) => cmd_check(&paths),
         Some(Cmd::Update { yes }) => cmd_update(yes),
     }
 }
@@ -425,6 +436,33 @@ fn cmd_psk() -> Result<()> {
 
 fn cmd_pubkey(private: &str) -> Result<()> {
     println!("{}", keys::public_from_private(private)?);
+    Ok(())
+}
+
+/// Validate each config with the same check the TUI's create/edit uses. Valid
+/// files report `ok` on stdout; problems (or an unreadable file) go to stderr, and
+/// any failure makes the whole run exit non-zero so it drops into a CI pipeline.
+fn cmd_check(paths: &[PathBuf]) -> Result<()> {
+    let mut all_ok = true;
+    for path in paths {
+        let label = path.display();
+        match std::fs::read_to_string(path) {
+            Ok(text) => match wg::validate_config(&text) {
+                Ok(()) => println!("{label}: {}", "ok".green()),
+                Err(e) => {
+                    all_ok = false;
+                    eprintln!("{label}: {}", e.to_string().red());
+                }
+            },
+            Err(e) => {
+                all_ok = false;
+                eprintln!("{label}: {}", format!("can't read: {e}").red());
+            }
+        }
+    }
+    if !all_ok {
+        std::process::exit(1);
+    }
     Ok(())
 }
 
