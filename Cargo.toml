@@ -7,6 +7,9 @@ license = "AGPL-3.0-only"
 repository = "https://gitlab.com/safteinzz/easywireguard"
 keywords = ["wireguard", "vpn", "mesh", "cli", "networking"]
 categories = ["command-line-utilities", "network-programming"]
+# README screenshots are fetched live from the forge by crates.io; never read out
+# of the package, so shipping them would only bloat every download.
+exclude = ["readme-assets/"]
 
 # The crate is `easywireguard`, but the command you type is the shorter `ewg`.
 [[bin]]
