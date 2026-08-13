@@ -2,12 +2,9 @@
 
 > **Canonical:** [gitlab.com/safteinzz/easywireguard](https://gitlab.com/safteinzz/easywireguard) · **Mirror:** [github.com/safteinzz/easywireguard](https://github.com/safteinzz/easywireguard)
 
-**Mesh, minus the mess. 🕸️**
-
-A tabbed, human-readable TUI and a flag-driven CLI for scripts, in one small binary.
-Manage live interfaces, describe a whole hub-and-spoke or full mesh in a single
-manifest, and onboard a phone by scanning a QR. Pure Rust, so no `wg` binary is
-needed for keys or config generation.
+<!-- desc:start -->
+mesh, minus the mess - interfaces, keys and full-mesh configs in one CLI + TUI
+<!-- desc:end -->
 
 ```bash
 cargo install easywireguard   # the command you type is the shorter `ewg`

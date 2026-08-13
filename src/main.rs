@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 #[command(
     name = "ewg",
     version,
-    about = "make wireguard easy - interfaces, keys and full-mesh configs in one CLI + TUI",
+    about,
     after_help = "Run bare `ewg` for the interface manager TUI. `dir` registers \
                   where your .conf files live so `list`/`up`/`down`/`status`/TUI \
                   span them all. `mesh` edits a manifest; `mesh gen` turns it into \
