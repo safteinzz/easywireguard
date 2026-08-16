@@ -14,16 +14,38 @@ use registry::Registry;
 use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
 
+const AFTER: &str = concat!(
+    "Run bare `ewg` for the interface manager TUI. `dir` registers \
+     where your .conf files live so `list`/`up`/`down`/`status`/TUI \
+     span them all. `mesh` edits a manifest; `mesh gen` turns it into \
+     each node's config as \"all peers minus itself\". `qr` renders any \
+     config (a .conf or a mesh node) as a scannable QR for a phone.",
+    "\n\nby ",
+    env!("CARGO_PKG_AUTHORS"),
+    "  ",
+    env!("CARGO_PKG_REPOSITORY"),
+);
+
+/// `-V` stays a bare version string for scripts; `--version` spells out who
+/// wrote it, under what license, and where it lives. Every field comes from
+/// Cargo.toml, so none of it can drift from the manifest.
+const LONG_VERSION: &str = concat!(
+    env!("CARGO_PKG_VERSION"),
+    "\n",
+    env!("CARGO_PKG_AUTHORS"),
+    "\n",
+    env!("CARGO_PKG_LICENSE"),
+    "  ",
+    env!("CARGO_PKG_REPOSITORY"),
+);
+
 #[derive(Parser)]
 #[command(
     name = "ewg",
     version,
+    long_version = LONG_VERSION,
     about,
-    after_help = "Run bare `ewg` for the interface manager TUI. `dir` registers \
-                  where your .conf files live so `list`/`up`/`down`/`status`/TUI \
-                  span them all. `mesh` edits a manifest; `mesh gen` turns it into \
-                  each node's config as \"all peers minus itself\". `qr` renders any \
-                  config (a .conf or a mesh node) as a scannable QR for a phone."
+    after_help = AFTER
 )]
 struct Cli {
     /// Use only this dir for this run, overriding the registry (or set $EWG_DIR)
