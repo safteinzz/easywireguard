@@ -20,23 +20,23 @@ const AFTER: &str = concat!(
      span them all. `mesh` edits a manifest; `mesh gen` turns it into \
      each node's config as \"all peers minus itself\". `qr` renders any \
      config (a .conf or a mesh node) as a scannable QR for a phone.",
-    "\n\nby ",
-    env!("CARGO_PKG_AUTHORS"),
-    "  ",
+    "\n\n",
     env!("CARGO_PKG_REPOSITORY"),
+    "\ncontributors: ",
+    env!("CARGO_PKG_AUTHORS"),
 );
 
-/// `-V` stays a bare version string for scripts; `--version` spells out who
-/// wrote it, under what license, and where it lives. Every field comes from
+/// `-V` stays a bare version string for scripts; `--version` spells out the
+/// license, where it lives, and who's contributed. Every field comes from
 /// Cargo.toml, so none of it can drift from the manifest.
 const LONG_VERSION: &str = concat!(
     env!("CARGO_PKG_VERSION"),
     "\n",
-    env!("CARGO_PKG_AUTHORS"),
-    "\n",
     env!("CARGO_PKG_LICENSE"),
     "  ",
     env!("CARGO_PKG_REPOSITORY"),
+    "\ncontributors: ",
+    env!("CARGO_PKG_AUTHORS"),
 );
 
 #[derive(Parser)]
