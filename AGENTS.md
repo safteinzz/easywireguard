@@ -43,6 +43,13 @@ Working brief for an AI coding agent, not documentation for people (the README c
 - Unit tests sit at the bottom of the source file they cover, end-to-end tests in `tests/cli.rs`; drive the built binary against temp dirs only, never real WireGuard interfaces, `/etc/wireguard`, or real keys.
 
 ## Overview
+Layout:
+- `src/main.rs` - the clap `Cmd` enum and the dispatch match, nothing else.
+- `src/commands/<verb>.rs` - one file per command, each exposing `run`, with a command's own argument types (`DirArgs`, `MeshArgs`) beside it.
+- `src/tui/` - the toolbox: `mod.rs` owns `App` and the event loop, `input.rs` dispatches keys, `interfaces.rs` and `mesh.rs` hold each tab's actions, `wizard.rs` is what a submitted prompt writes, `prompt.rs` is the wizard's field machinery, `render.rs` draws the frame, `overlay.rs` the centered windows, `widgets.rs` the domain-blind furniture, `edit.rs` the `$EDITOR` handoff, `clipboard.rs` the OSC 52 copy.
+- Domain modules at the top level: `wg` (interfaces and `wg-quick`), `manifest` (the mesh file), `keys` (x25519), `registry` (where configs live), `elevate` (re-exec under sudo), `selfcmd` (`ewg self`).
+
+
 `ewg` (crate `easywireguard`) generates WireGuard key material and manages live interfaces, and from a single mesh manifest generates each node's `.conf` as "all peers minus itself". Built for full-mesh WireGuard (every node an equal peer, no central hub) plus day-to-day interface management, with no external `wg` binary needed for its core.
 If this file contradicts the code, the code wins; fix this file the same session.
 

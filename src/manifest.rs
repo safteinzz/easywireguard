@@ -149,7 +149,8 @@ impl Manifest {
         if Self::is_hub(node) {
             Self::is_hub(peer) || peer.hubs.is_empty() || peer.hubs.iter().any(|h| h == &node.name)
         } else {
-            Self::is_hub(peer) && (node.hubs.is_empty() || node.hubs.iter().any(|h| h == &peer.name))
+            Self::is_hub(peer)
+                && (node.hubs.is_empty() || node.hubs.iter().any(|h| h == &peer.name))
         }
     }
 
@@ -274,11 +275,20 @@ mod tests {
         m.nodes[0].keepalive = Some(25);
         m.nodes[1].dns = Some("192.168.10.250".into()); // B uses a Pi-hole
         let cfg_b = m.node_config(&m.nodes[1]);
-        assert!(cfg_b.contains("AllowedIPs = 0.0.0.0/0"), "A's override should win over /32");
+        assert!(
+            cfg_b.contains("AllowedIPs = 0.0.0.0/0"),
+            "A's override should win over /32"
+        );
         assert!(cfg_b.contains("PersistentKeepalive = 25"));
-        assert!(cfg_b.contains("DNS        = 192.168.10.250"), "B's own interface DNS");
+        assert!(
+            cfg_b.contains("DNS        = 192.168.10.250"),
+            "B's own interface DNS"
+        );
         // and the default is still a /32 when unset (A's config, B has no override)
-        assert!(m.node_config(&m.nodes[0]).contains("AllowedIPs = 10.10.0.2/32"));
+        assert!(
+            m.node_config(&m.nodes[0])
+                .contains("AllowedIPs = 10.10.0.2/32")
+        );
     }
 
     #[test]

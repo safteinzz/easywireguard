@@ -70,6 +70,15 @@ pub fn default_path() -> Result<PathBuf> {
     Ok(base.join("ewg").join("dirs.toml"))
 }
 
+/// The dirs to operate on: a `--dir` override, else the registry (which falls
+/// back to `/etc/wireguard` when empty).
+pub(crate) fn resolve_dirs(cli_dir: Option<PathBuf>) -> Result<Vec<PathBuf>> {
+    if let Some(dir) = cli_dir {
+        return Ok(vec![dir]);
+    }
+    Ok(Registry::load(&default_path()?)?.effective())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

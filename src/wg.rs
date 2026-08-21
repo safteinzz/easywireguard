@@ -132,7 +132,10 @@ pub fn show(name: &str) -> Result<String> {
         .output()
         .context("running `wg` (install wireguard-tools)")?;
     if !out.status.success() {
-        bail!("`wg show {name}` failed: {}", String::from_utf8_lossy(&out.stderr).trim());
+        bail!(
+            "`wg show {name}` failed: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
     }
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
@@ -197,27 +200,40 @@ pub fn validate_config(text: &str) -> Result<()> {
     }
     let secs = sections(text);
     let get = |kvs: &[(String, String)], key: &str| {
-        kvs.iter().find(|(k, _)| k.eq_ignore_ascii_case(key)).map(|(_, v)| v.trim().to_string()).filter(|v| !v.is_empty())
+        kvs.iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(key))
+            .map(|(_, v)| v.trim().to_string())
+            .filter(|v| !v.is_empty())
     };
-    let Some((_, iface)) = secs.iter().find(|(h, _)| h.eq_ignore_ascii_case("[Interface]")) else {
+    let Some((_, iface)) = secs
+        .iter()
+        .find(|(h, _)| h.eq_ignore_ascii_case("[Interface]"))
+    else {
         bail!("no `[Interface]` section - is this a WireGuard config?");
     };
     match get(iface, "PrivateKey") {
         None => bail!("`[Interface]` is missing a `PrivateKey`"),
-        Some(k) if !crate::keys::is_wg_key(&k) => bail!("`PrivateKey` is not a valid WireGuard key (expected 44-char base64)"),
+        Some(k) if !crate::keys::is_wg_key(&k) => {
+            bail!("`PrivateKey` is not a valid WireGuard key (expected 44-char base64)")
+        }
         _ => {}
     }
     if get(iface, "Address").is_none() {
         bail!("`[Interface]` is missing an `Address` (the interface IP, e.g. 10.0.0.2/24)");
     }
-    let peers: Vec<_> = secs.iter().filter(|(h, _)| h.eq_ignore_ascii_case("[Peer]")).collect();
+    let peers: Vec<_> = secs
+        .iter()
+        .filter(|(h, _)| h.eq_ignore_ascii_case("[Peer]"))
+        .collect();
     if peers.is_empty() {
         bail!("no `[Peer]` section - add the server/hub this connects to");
     }
     for (_, kvs) in &peers {
         match get(kvs, "PublicKey") {
             None => bail!("a `[Peer]` is missing a `PublicKey`"),
-            Some(k) if !crate::keys::is_wg_key(&k) => bail!("a `[Peer]` `PublicKey` is not a valid WireGuard key"),
+            Some(k) if !crate::keys::is_wg_key(&k) => {
+                bail!("a `[Peer]` `PublicKey` is not a valid WireGuard key")
+            }
             _ => {}
         }
     }
@@ -238,7 +254,10 @@ pub fn valid_iface_name(name: &str) -> Result<()> {
     if name == "." || name == ".." {
         bail!("`{name}` is not a usable interface name");
     }
-    if let Some(bad) = name.chars().find(|c| !(c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '@'))) {
+    if let Some(bad) = name
+        .chars()
+        .find(|c| !(c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '@')))
+    {
         bail!("`{name}` has an invalid character `{bad}` - use letters, digits, `-` `_` `.` `@`");
     }
     Ok(())
@@ -302,8 +321,14 @@ mod tests {
         assert!(valid_iface_name("wg-home_1.a@b").is_ok());
         assert!(valid_iface_name("").is_err(), "empty is rejected");
         assert!(valid_iface_name("a/b").is_err(), "slash is rejected");
-        assert!(valid_iface_name("has space").is_err(), "whitespace is rejected");
-        assert!(valid_iface_name("0123456789abcdef").is_err(), "16 chars is too long");
+        assert!(
+            valid_iface_name("has space").is_err(),
+            "whitespace is rejected"
+        );
+        assert!(
+            valid_iface_name("0123456789abcdef").is_err(),
+            "16 chars is too long"
+        );
         assert!(valid_iface_name("..").is_err(), "dot-dot is rejected");
     }
 
@@ -315,19 +340,50 @@ mod tests {
         let good = format!(
             "[Interface]\nPrivateKey = {priv_k}\nAddress = 10.0.0.2/24\n\n[Peer]\nPublicKey = {pub_k}\nEndpoint = vpn.example:51820\nAllowedIPs = 0.0.0.0/0\n"
         );
-        assert!(validate_config(&good).is_ok(), "a complete config is accepted");
+        assert!(
+            validate_config(&good).is_ok(),
+            "a complete config is accepted"
+        );
 
-        assert!(validate_config("   \n").unwrap_err().to_string().contains("empty"));
-        assert!(validate_config("PrivateKey = x\n").unwrap_err().to_string().contains("[Interface]"));
+        assert!(
+            validate_config("   \n")
+                .unwrap_err()
+                .to_string()
+                .contains("empty")
+        );
+        assert!(
+            validate_config("PrivateKey = x\n")
+                .unwrap_err()
+                .to_string()
+                .contains("[Interface]")
+        );
 
-        let no_priv = format!("[Interface]\nAddress = 10.0.0.2/24\n\n[Peer]\nPublicKey = {pub_k}\n");
-        assert!(validate_config(&no_priv).unwrap_err().to_string().contains("PrivateKey"));
+        let no_priv =
+            format!("[Interface]\nAddress = 10.0.0.2/24\n\n[Peer]\nPublicKey = {pub_k}\n");
+        assert!(
+            validate_config(&no_priv)
+                .unwrap_err()
+                .to_string()
+                .contains("PrivateKey")
+        );
 
-        let bad_priv = format!("[Interface]\nPrivateKey = not-a-key\nAddress = 10.0.0.2/24\n\n[Peer]\nPublicKey = {pub_k}\n");
-        assert!(validate_config(&bad_priv).unwrap_err().to_string().contains("valid WireGuard key"));
+        let bad_priv = format!(
+            "[Interface]\nPrivateKey = not-a-key\nAddress = 10.0.0.2/24\n\n[Peer]\nPublicKey = {pub_k}\n"
+        );
+        assert!(
+            validate_config(&bad_priv)
+                .unwrap_err()
+                .to_string()
+                .contains("valid WireGuard key")
+        );
 
         let no_peer = format!("[Interface]\nPrivateKey = {priv_k}\nAddress = 10.0.0.2/24\n");
-        assert!(validate_config(&no_peer).unwrap_err().to_string().contains("[Peer]"));
+        assert!(
+            validate_config(&no_peer)
+                .unwrap_err()
+                .to_string()
+                .contains("[Peer]")
+        );
     }
 
     #[test]

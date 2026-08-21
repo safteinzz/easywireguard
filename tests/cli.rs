@@ -87,7 +87,10 @@ fn check_reports_ok_and_fails_on_a_broken_config() {
         AllowedIPs = 0.0.0.0/0\n";
     s.write("good.conf", good);
     let out = s.ok(&["check", "good.conf"]);
-    assert!(out.contains("good.conf") && out.contains("ok"), "got: {out}");
+    assert!(
+        out.contains("good.conf") && out.contains("ok"),
+        "got: {out}"
+    );
 
     // Missing PrivateKey -> exit non-zero, reason on stderr.
     s.write("bad.conf", "[Interface]\nAddress = 10.0.0.2/24\n\n[Peer]\nPublicKey = obuvsSP3vVFDjzrcwCWqgLmZeqEEVBGHIqzX3v4hYHA=\n");
