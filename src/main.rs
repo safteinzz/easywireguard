@@ -3,6 +3,7 @@
 mod keys;
 mod manifest;
 mod registry;
+mod selfcmd;
 mod tui;
 mod wg;
 
@@ -61,6 +62,10 @@ struct Cli {
 enum Cmd {
     /// Interface manager TUI (also the default with no subcommand)
     Tui,
+
+    /// Manage easywireguard itself: `self update` reinstalls, `self check` looks for a newer release
+    #[command(name = "self", subcommand)]
+    Selfie(selfcmd::Cmd),
 
     /// List every interface you can up/down across your dirs, with up/down state
     #[command(visible_alias = "ls")]
@@ -224,6 +229,7 @@ fn main() -> Result<()> {
     }
     let cli = Cli::parse();
     match cli.cmd {
+        Some(Cmd::Selfie(cmd)) => selfcmd::run(cmd),
         None | Some(Cmd::Tui) => {
             let dirs = resolve_dirs(cli.dir)?;
             elevate_for(&dirs)?;

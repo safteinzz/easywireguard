@@ -8,6 +8,7 @@ mesh, minus the mess - interfaces, keys and full-mesh configs in one CLI + TUI
 
 ```bash
 cargo install easywireguard   # the command you type is the shorter `ewg`
+ewg self update               # reinstall the latest release later on
 ```
 
 ## Manage every interface
