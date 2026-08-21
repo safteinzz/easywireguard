@@ -72,7 +72,7 @@ impl View {
 }
 
 /// A centered modal over the current tab: a QR to scan, or a scrollable text
-/// pager (`Text`) showing a `.conf` — an interface's on disk, or a mesh node's
+/// pager (`Text`) showing a `.conf` - an interface's on disk, or a mesh node's
 /// generated on the fly (even if it was never written out).
 enum Overlay {
     Qr { title: String, width: usize, dark: Vec<bool> },
@@ -486,7 +486,7 @@ impl App {
         format!("10.10.1.{next}/24")
     }
 
-    /// Names of the hubs (nodes with an endpoint) — the pickable targets for a spoke.
+    /// Names of the hubs (nodes with an endpoint) - the pickable targets for a spoke.
     fn hub_names(&self) -> Vec<String> {
         self.nodes.iter().filter(|n| n.endpoint.is_some()).map(|n| n.name.clone()).collect()
     }
