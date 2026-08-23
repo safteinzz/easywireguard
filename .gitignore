@@ -13,3 +13,6 @@ GEMINI.md
 
 # Personal mesh manifest (may carry private keys), never commit from the tool repo
 /mesh.toml
+
+# Private reference material, never committed - see AGENTS.md
+/.nocommit
