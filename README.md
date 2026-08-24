@@ -9,9 +9,12 @@ mesh, minus the mess - interfaces, keys and full-mesh configs in one CLI + TUI
 ## Install
 
 ```bash
-cargo install easywireguard   # the command you type is the shorter `ewg`
-ewg self update               # reinstall the latest release later on
+cargo install easywireguard
+ewg self check   # is a newer release out?
+ewg self update  # install the latest
 ```
+
+No cargo yet? Rust installs the same way on every distro: [rustup.rs](https://rustup.rs).
 
 ![A tour of ewg: inspecting a running interface, toggling one up and down, browsing the mesh, creating a node with a generated keypair, exporting it as an Ansible entry, deleting it, and generating every node's config](https://gitlab.com/safteinzz/easywireguard/-/raw/main/readme-assets/demo.gif)
 
@@ -60,28 +63,7 @@ PNG, or an Ansible peer entry.
 
 ![A scannable QR code of a node's generated config, over the mesh list, titled scan phone](https://gitlab.com/safteinzz/easywireguard/-/raw/main/readme-assets/qr.png)
 
-## Keys
-
-| key | Interfaces | Mesh |
-| --- | --- | --- |
-| `j/k` `↑↓` | move | move |
-| `h/l` `←→` `tab` | switch tab | switch tab |
-| `↵` | toggle up / down | show the QR |
-| `c` | new config in `$EDITOR` | create a node |
-| `e` | edit it in `$EDITOR` | edit the node |
-| `d` | delete (keeps a `.bak`) | remove from the manifest |
-| `i` | inspect, with live `wg show` | view the generated config |
-| `b` | toggle start-on-boot | |
-| `R` | | rotate the keypair |
-| `E` | | export (file, install, QR, Ansible) |
-| `g` | | generate every node's config |
-| `r` | refresh | reload the manifest |
-| `q` `esc` | quit | quit |
-
-A config pasted into `$EDITOR` is validated before it lands, so a truncated
-paste is caught there rather than at `wg-quick up`.
-
-## CLI
+## Commands
 
 The TUI wraps these; call them directly to automate.
 
@@ -98,7 +80,7 @@ ewg key | psk | pubkey <PRIVATE>
 ewg mesh add flint --address 10.10.1.1/24 --pubkey <PUB> \
     --endpoint vpn.example.com:51820 --allowed-ips 0.0.0.0/0     # a hub / exit
 ewg mesh add phone --address 10.10.1.3/24 --pubkey <PUB> \
-    --hub flint --dns 192.168.10.250 --keepalive 25 [--private <PRIV>]
+    --hub flint --dns 10.10.1.1 --keepalive 25 [--private <PRIV>]
 ewg mesh                           # list (-v verbose, --json; never prints private keys)
 ewg mesh rm <name>
 ewg mesh gen -o out/               # write every node's .conf
@@ -106,9 +88,6 @@ ewg mesh gen -o out/               # write every node's .conf
 # QR (onboard a phone)
 ewg qr <node> -m mesh.toml         # QR of that node's generated config
 ewg qr out/phone.conf -o phone.png # a .conf file, also written as a PNG
-
-# the tool itself
-ewg self check | self update
 ```
 
 `--hub` (repeatable) makes a node a spoke of those hubs; omit it and a spoke
@@ -128,6 +107,12 @@ inject keys later.
   to your `wg-quick`. Keys and config generation are pure Rust, never a wrapper
   around `wg`.
 
+## Compatibility
+
+Linux. Interfaces are brought up through `wg-quick` and `systemctl`, so the
+interface side needs a systemd machine; key generation and mesh config are pure
+Rust and work anywhere.
+
 ## License
 
-AGPL-3.0-only.
+AGPL-3.0-only
