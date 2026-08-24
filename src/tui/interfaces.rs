@@ -241,7 +241,7 @@ impl App {
             body.push_str(&live);
         }
         self.overlay = Some(Overlay::Text {
-            title: format!(" {} ", iface.path.display()),
+            title: format!(" {} ", tilde(&iface.path)),
             body,
             scroll: 0,
         });

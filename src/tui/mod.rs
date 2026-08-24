@@ -52,7 +52,7 @@ use edit::{Action, EditorReq, act, run_editor};
 use overlay::Overlay;
 use prompt::{Field, FieldKind, KeySource, NodeKind, Prompt};
 use render::render;
-use widgets::{centered, centered_pct, empty, titled};
+use widgets::{centered, centered_pct, empty, tilde, titled};
 
 const STATUS_TTL: Duration = Duration::from_millis(1500);
 

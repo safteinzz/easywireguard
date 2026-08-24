@@ -11,8 +11,9 @@ repository = "https://gitlab.com/safteinzz/easywireguard"
 keywords = ["wireguard", "vpn", "mesh", "cli", "networking"]
 categories = ["command-line-utilities", "network-programming"]
 # README screenshots are fetched over the network by crates.io via absolute raw
-# URLs, never read out of the package, so shipping them would only bloat every download.
-exclude = ["readme-assets/"]
+# URLs, never read out of the package, so shipping them would only bloat every
+# download; demo/ is what renders them, and is no use to anyone installing.
+exclude = ["readme-assets/", "demo/"]
 
 # The crate is `easywireguard`, but the command you type is the shorter `ewg`.
 [[bin]]

@@ -3,6 +3,7 @@
 
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
+use std::path::Path;
 
 /// A bordered block titled `Name (count)`.
 pub(super) fn titled(name: &str, count: usize) -> Block<'static> {
@@ -35,4 +36,20 @@ pub(super) fn centered(area: Rect, w: u16, h: u16) -> Rect {
 pub(super) fn centered_pct(area: Rect, pct: u16, height: u16) -> Rect {
     let w = area.width * pct / 100;
     centered(area, w, height)
+}
+
+/// A path with the home directory collapsed to `~`, for anything that puts a
+/// path on screen: `/home/you/wg/mesh.conf` is mostly noise, and the part that
+/// identifies the file is the tail.
+pub(super) fn tilde(path: &Path) -> String {
+    let full = path.display().to_string();
+    let Some(home) = dirs::home_dir() else {
+        return full;
+    };
+    let home = home.display().to_string();
+    match full.strip_prefix(&home) {
+        Some("") => "~".into(),
+        Some(rest) if rest.starts_with('/') => format!("~{rest}"),
+        _ => full,
+    }
 }
