@@ -27,15 +27,25 @@ impl App {
                     _ => close = true,
                 },
                 Overlay::Qr { .. } => close = true,
-                Overlay::Confirm { action, .. } => {
-                    if matches!(
-                        key.code,
-                        KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter
-                    ) {
+                Overlay::Confirm { action, yes, .. } => match key.code {
+                    KeyCode::Char('y' | 'Y') => {
                         confirm = Some(action.clone());
+                        close = true;
                     }
-                    close = true; // any key dismisses the confirm
-                }
+                    KeyCode::Char('n' | 'N') | KeyCode::Esc | KeyCode::Char('q') => close = true,
+                    KeyCode::Left | KeyCode::Right | KeyCode::Char('h' | 'l') | KeyCode::Tab => {
+                        *yes = !*yes
+                    }
+                    KeyCode::Enter => {
+                        if *yes {
+                            confirm = Some(action.clone());
+                        }
+                        close = true;
+                    }
+                    // Anything else is swallowed: a stray keypress must not be
+                    // able to answer a gate, in either direction.
+                    _ => {}
+                },
                 Overlay::Menu {
                     name, items, idx, ..
                 } => match key.code {
@@ -181,8 +191,9 @@ impl App {
                     return;
                 };
                 self.overlay = Some(Overlay::Confirm {
-                    prompt: format!(" delete `{name}` from mesh.toml?  y / n "),
+                    prompt: format!("delete `{name}` from mesh.toml?"),
                     action: ConfirmAction::DeleteNode(name),
+                    yes: false,
                 });
             }
             KeyCode::Enter => {

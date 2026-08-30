@@ -210,7 +210,7 @@ impl Prompt {
         let mut fields = Self::base_fields(kind, default_addr, hubs);
         fields.extend(Self::key_fields(keysrc));
         Self {
-            title: "Create a mesh node".into(),
+            title: "create a mesh node".into(),
             idx: 0,
             action: Action::AddNode,
             fields,
@@ -250,7 +250,7 @@ impl Prompt {
             NodeKind::Spoke
         };
         let mut p = Self {
-            title: format!("Edit `{}`", node.name),
+            title: format!("edit `{}`", node.name),
             fields: Self::base_fields(kind, &node.address, hubs),
             idx: 0,
             action: Action::EditNode {

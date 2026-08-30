@@ -23,6 +23,9 @@ pub(super) enum Overlay {
     Confirm {
         prompt: String,
         action: ConfirmAction,
+        /// Which button is selected. Starts on No: a gate stands in front of
+        /// something irreversible, so a reflex Enter must never fire it.
+        yes: bool,
     },
     Menu {
         title: String,
@@ -59,10 +62,12 @@ pub(super) enum ExportKind {
 }
 
 pub(super) fn render_prompt(f: &mut Frame, area: Rect, p: &Prompt) {
-    let height = p.fields.len() as u16 + 6;
-    let rect = centered_pct(area, 72, height);
+    // One row per field, then a blank and the key line.
+    let rows = p.fields.len() as u16 + 2;
+    let rect = centered(area, box_width(area.width), box_height(rows, area.height));
     f.render_widget(Clear, rect);
-    let mut lines: Vec<Line> = vec![Line::raw("")];
+    // No leading blank: the box's own top padding is that row.
+    let mut lines: Vec<Line> = Vec::new();
     for (i, field) in p.fields.iter().enumerate() {
         let active = i == p.idx;
         let label_style = if active {
@@ -164,17 +169,11 @@ pub(super) fn render_prompt(f: &mut Frame, area: Rect, p: &Prompt) {
         }
     }
     lines.push(Line::raw(""));
-    lines.push(Line::from(Span::styled(
-        format!("  {CTRL_VIM_Y_MOVE} {Y_MOVE} move · {CTRL_VIM_X_MOVE} {X_MOVE} choose · enter next/submit · esc cancel"),
-        Style::default().add_modifier(Modifier::DIM),
+    lines.push(box_hint(&format!(
+        "{CTRL_VIM_Y_MOVE} {Y_MOVE} move · {CTRL_VIM_X_MOVE} {X_MOVE} choose · enter next/submit · esc cancel"
     )));
     let para = Paragraph::new(lines)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(format!(" {} ", p.title))
-                .border_style(Style::default().fg(Color::Cyan)),
-        )
+        .block(box_block(Color::Cyan, &p.title))
         .wrap(Wrap { trim: false });
     f.render_widget(para, rect);
 }
@@ -203,12 +202,22 @@ pub(super) fn render_overlay(f: &mut Frame, ov: &Overlay) {
                 (qr_quad(n, &is_dark), quad)
             } else {
                 // Even the densest rendering won't fit - don't show a clipped, un-
-                // scannable QR; point at the file/PNG instead.
-                let area = centered(full, 50.min(full.width), 4);
+                // scannable QR; point at the file/PNG instead. An alert: it has
+                // already failed, and reading it costs nothing.
+                let body = format!(
+                    "a QR this size needs a {}x{} terminal.\n\nMaximise the window, or press E to write out/<name>.conf or its PNG instead.",
+                    quad.0, quad.1
+                );
+                let width = box_width(full.width);
+                let rows = wrapped_height(&body, box_inner_width(width)) as u16;
+                let area = centered(full, width, box_height(rows + 2, full.height));
                 f.render_widget(Clear, area);
+                let mut lines: Vec<Line> = body.lines().map(|l| Line::raw(l.to_string())).collect();
+                lines.push(Line::raw(""));
+                lines.push(box_hint("esc dismiss"));
                 f.render_widget(
-                    Paragraph::new(format!("QR needs a {}x{} terminal.\nMaximize the window, or use E -> out/<name>.conf / PNG.", quad.0, quad.1))
-                        .block(Block::default().borders(Borders::ALL).title(title.clone()).border_style(Style::default().fg(Color::Yellow)))
+                    Paragraph::new(lines)
+                        .block(box_block(Color::Yellow, "qr does not fit"))
                         .wrap(Wrap { trim: false }),
                     area,
                 );
@@ -228,60 +237,59 @@ pub(super) fn render_overlay(f: &mut Frame, ov: &Overlay) {
             scroll,
         } => {
             let full = f.area();
-            let w = (body.lines().map(|l| l.chars().count()).max().unwrap_or(40) as u16 + 4)
-                .min(full.width.saturating_sub(4))
-                .max(24);
-            let h = (body.lines().count() as u16 + 3)
-                .min(full.height.saturating_sub(2))
-                .max(6);
-            let area = centered(full, w, h);
+            let width = box_width(full.width);
+            let rows = wrapped_height(body, box_inner_width(width)) as u16;
+            let area = centered(full, width, box_height(rows + 2, full.height));
             f.render_widget(Clear, area);
-            let foot = format!("  {VIM_Y_MOVE} {Y_MOVE} scroll · y copy · other key close");
+            let mut lines: Vec<Line> = body.lines().map(|l| Line::raw(l.to_string())).collect();
+            lines.push(Line::raw(""));
+            lines.push(box_hint(&format!(
+                "{VIM_Y_MOVE} {Y_MOVE} scroll · y copy · esc close"
+            )));
             f.render_widget(
-                Paragraph::new(body.clone())
-                    .block(
-                        Block::default()
-                            .borders(Borders::ALL)
-                            .title(title.clone())
-                            .title_bottom(Line::from(foot).right_aligned())
-                            .border_style(Style::default().fg(Color::Cyan)),
-                    )
+                Paragraph::new(lines)
+                    .block(box_block(Color::Cyan, title))
                     .scroll((*scroll, 0)),
                 area,
             );
         }
-        Overlay::Confirm { prompt, .. } => {
-            let w = prompt.chars().count() as u16 + 2;
-            let area = centered(f.area(), w, 3);
+        Overlay::Confirm { prompt, yes, .. } => {
+            // A gate: red, and it starts on No, so a reflex Enter is never the
+            // key that deletes something.
+            let full = f.area();
+            let width = box_width(full.width);
+            // The prompt, a blank, the buttons, a blank, the keys.
+            let rows = wrapped_height(prompt, box_inner_width(width)) as u16 + 4;
+            let area = centered(full, width, box_height(rows, full.height));
             f.render_widget(Clear, area);
             f.render_widget(
-                Paragraph::new(prompt.clone()).block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .border_style(Style::default().fg(Color::Red)),
-                ),
+                Paragraph::new(vec![
+                    Line::raw(prompt.clone()),
+                    Line::raw(""),
+                    box_buttons(Color::Red, *yes),
+                    Line::raw(""),
+                    box_hint("h/l ←/→ move · enter select · y/n"),
+                ])
+                .wrap(Wrap { trim: false })
+                .block(box_block(Color::Red, "are you sure?")),
                 area,
             );
         }
         Overlay::Invalid { reason, .. } => {
+            // An alert: it already happened, reading it costs nothing, so
+            // yellow rather than the red that means something is at stake.
             let full = f.area();
-            let body = format!(
-                "This config is not valid:\n\n{reason}\n\ne / ↵  correct (reopen editor)\nd / esc  discard"
-            );
-            let w = 64.min(full.width.saturating_sub(4)).max(28);
-            let h = (body.lines().count() as u16 + 4)
-                .min(full.height.saturating_sub(2))
-                .max(7);
-            let area = centered(full, w, h);
+            let body = format!("this config is not valid:\n\n{reason}");
+            let width = box_width(full.width);
+            let rows = wrapped_height(&body, box_inner_width(width)) as u16;
+            let area = centered(full, width, box_height(rows + 2, full.height));
             f.render_widget(Clear, area);
+            let mut lines: Vec<Line> = body.lines().map(|l| Line::raw(l.to_string())).collect();
+            lines.push(Line::raw(""));
+            lines.push(box_hint("e ↵ correct · d esc discard"));
             f.render_widget(
-                Paragraph::new(body)
-                    .block(
-                        Block::default()
-                            .borders(Borders::ALL)
-                            .title(" invalid config ")
-                            .border_style(Style::default().fg(Color::Yellow)),
-                    )
+                Paragraph::new(lines)
+                    .block(box_block(Color::Yellow, "invalid config"))
                     .wrap(Wrap { trim: false }),
                 area,
             );
@@ -309,36 +317,26 @@ pub(super) fn render_overlay(f: &mut Frame, ov: &Overlay) {
                     ])
                 })
                 .collect();
-            let w = items
-                .iter()
-                .map(|(l, _)| l.chars().count())
-                .max()
-                .unwrap_or(20) as u16
-                + 6;
+            let full = f.area();
             let area = centered(
-                f.area(),
-                w.max(title.chars().count() as u16 + 2),
-                items.len() as u16 + 2,
+                full,
+                box_width(full.width),
+                box_height(items.len() as u16 + 2, full.height),
             );
             f.render_widget(Clear, area);
+            let mut lines = lines;
+            lines.push(Line::raw(""));
+            lines.push(box_hint(&format!(
+                "{VIM_Y_MOVE} {Y_MOVE} move · ↵ select · esc cancel"
+            )));
             f.render_widget(
-                Paragraph::new(lines).block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .title(title.clone())
-                        .title_bottom(
-                            Line::from(format!("  {VIM_Y_MOVE} {Y_MOVE} · ↵ select · esc"))
-                                .right_aligned(),
-                        )
-                        .border_style(Style::default().fg(Color::Cyan)),
-                ),
+                Paragraph::new(lines).block(box_block(Color::Cyan, title)),
                 area,
             );
         }
     }
 }
 
-/// A rect centered in `area`, exactly `w`x`h` (capped to the screen).
 /// Shrink a `.conf` for QR encoding without changing meaning: drop the alignment
 /// padding around `=`, the client-irrelevant `ListenPort`, `[Peer]` name comments,
 /// and blank lines. WireGuard parses `Key=Value` fine, so fewer bytes = smaller QR.

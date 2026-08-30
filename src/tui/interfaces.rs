@@ -177,8 +177,9 @@ impl App {
         let name = iface.name.clone();
         let path = iface.path.clone();
         self.overlay = Some(Overlay::Confirm {
-            prompt: format!(" delete `{name}.conf`?  (a .bak is kept)  y / n "),
+            prompt: format!("delete `{name}.conf`? a .bak is kept."),
             action: ConfirmAction::DeleteIface(path),
+            yes: false,
         });
     }
 
