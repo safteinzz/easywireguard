@@ -136,7 +136,9 @@ impl App {
             .as_deref()
             .map(stem)
             .unwrap_or_else(|| self.next_iface_name());
-        let mut name = Field::new("Name (.conf interface name)", "");
+        let mut name = Field::new("Name", "")
+            .required()
+            .hint("the .conf interface name");
         name.value = default_name;
         let mut fields = vec![name];
         if original.is_none() && self.dirs.len() > 1 {

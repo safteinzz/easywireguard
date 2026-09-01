@@ -1,6 +1,6 @@
 [package]
 name = "easywireguard"
-version = "0.5.2"
+version = "0.5.3"
 edition = "2024"
 rust-version = "1.88"
 description = "mesh, minus the mess - interfaces, keys and full-mesh configs in one CLI + TUI"

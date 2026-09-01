@@ -62,14 +62,14 @@ const STATUS_TTL: Duration = Duration::from_millis(1500);
 // Movement key labels, split so each view states exactly the chord it accepts and
 // they still read the same everywhere. `Y` = vertical, `X` = horizontal; `VIM_` is
 // the letter form, plain is the arrow form. Lists take either (`VIM_Y_MOVE Y_MOVE`
-// -> "j/k ↑↓"); the wizard needs the ctrl- letter form, since bare letters are
-// typed into its fields, while its arrows work unmodified ("ctrl-j/k ↑↓").
+// -> "j/k ↑↓"). The wizard names the arrows only: bare letters are typed into its
+// fields, so its letter form is the ctrl- chord, and a form that has to teach a
+// chord on the row you are standing on is a form with too much on it. The chords
+// still work, they are just not what a wizard's key line is for.
 const Y_MOVE: &str = "↑↓";
 const X_MOVE: &str = "←→";
 const VIM_Y_MOVE: &str = "j/k";
 const VIM_X_MOVE: &str = "h/l";
-const CTRL_VIM_Y_MOVE: &str = "ctrl-j/k";
-const CTRL_VIM_X_MOVE: &str = "ctrl-h/l";
 
 /// The tabs, in left-to-right / Tab-cycle order.
 #[derive(Clone, Copy, PartialEq)]

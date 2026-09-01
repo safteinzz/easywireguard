@@ -61,14 +61,76 @@ pub(super) enum ExportKind {
     Ansible,
 }
 
+/// The red `*` beside a required field's label, empty for the rest. Its colour
+/// does not follow the focus: whether a field can be left blank is a property of
+/// the field, not of where the cursor is.
+fn required_star(field: &Field) -> Span<'static> {
+    Span::styled(
+        if field.required { "*" } else { "" },
+        Style::default().fg(Color::Red),
+    )
+}
+
+/// The column a wizard's values start in, measured from the label's first
+/// character. Fixed rather than measured off whatever is on screen: a toggle
+/// rebuilds the form, and a measured column would slide every value sideways
+/// each time the longest label changed.
+const LABEL_COL: usize = 14;
+/// How far a wide form may push that column before the labels are the ones that
+/// give way, so a single long label cannot shove every value off the box.
+const LABEL_COL_MAX: usize = 22;
+
+/// The columns a label cell eats: the label, its star, and the colon.
+fn label_width(field: &Field) -> usize {
+    field.label.chars().count() + usize::from(field.required) + 1
+}
+
+/// Where this form's values start.
+fn value_column(fields: &[Field]) -> usize {
+    let widest = fields.iter().map(label_width).max().unwrap_or(0) + 2;
+    widest.clamp(LABEL_COL, LABEL_COL_MAX)
+}
+
+/// One option of a toggle, drawn like the house Yes/No buttons because it is
+/// the same thing: the filled one is what the form will use, the other is dim.
+fn chip(label: &str, picked: bool) -> Span<'static> {
+    let style = if picked {
+        Style::default()
+            .fg(Color::Black)
+            .bg(Color::Cyan)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().add_modifier(Modifier::DIM)
+    };
+    Span::styled(format!(" {label} "), style)
+}
+
+/// A form: labels in one column, values in another, and nothing that appears or
+/// disappears with the cursor. Per-row key hints used to sit on whichever row
+/// was focused, which made every row grow and shrink as you moved through the
+/// form for the sake of repeating what the key line at the bottom already says.
 pub(super) fn render_prompt(f: &mut Frame, area: Rect, p: &Prompt) {
-    // One row per field, then a blank and the key line.
-    let rows = p.fields.len() as u16 + 2;
-    let rect = centered(area, box_width(area.width), box_height(rows, area.height));
+    let width = box_width(area.width);
+    let mut hint = format!("{Y_MOVE} move · {X_MOVE} choose · ↵ next/submit · esc cancel");
+    if p.fields.iter().any(|f| f.required) {
+        hint.push_str(" · * required");
+    }
+    // The field block (a fixed height, so a toggle never resizes the box), then
+    // a blank and the key line - which can wrap, so it is measured, not counted.
+    let rows = p.body_rows() as u16 + 1 + wrapped_height(&hint, box_inner_width(width)) as u16;
+    let rect = centered(area, width, box_height(rows, area.height));
     f.render_widget(Clear, rect);
+
+    let dim = Style::default().add_modifier(Modifier::DIM);
+    let col = value_column(&p.fields);
     // No leading blank: the box's own top padding is that row.
     let mut lines: Vec<Line> = Vec::new();
     for (i, field) in p.fields.iter().enumerate() {
+        // The key material is the second half of a create wizard; one blank row
+        // is all the separation it needs.
+        if i > 0 && matches!(field.kind, FieldKind::Key(_)) {
+            lines.push(Line::raw(""));
+        }
         let active = i == p.idx;
         let label_style = if active {
             Style::default()
@@ -77,101 +139,61 @@ pub(super) fn render_prompt(f: &mut Frame, area: Rect, p: &Prompt) {
         } else {
             Style::default().add_modifier(Modifier::DIM)
         };
-        let arrow = Span::raw(if active { "▸ " } else { "  " });
+        let pad = col.saturating_sub(label_width(field)).max(1);
+        let mut spans = vec![
+            Span::raw(if active { "▸ " } else { "  " }),
+            Span::styled(field.label.clone(), label_style),
+            required_star(field),
+            Span::styled(format!(":{}", " ".repeat(pad)), label_style),
+        ];
         match &field.kind {
             FieldKind::Type(kind) => {
-                let dim = Style::default().add_modifier(Modifier::DIM);
-                let opt = |k: NodeKind| {
-                    let st = if k == *kind {
-                        Style::default()
-                            .fg(Color::Cyan)
-                            .add_modifier(Modifier::BOLD | Modifier::REVERSED)
-                    } else {
-                        dim
-                    };
-                    Span::styled(format!(" {} ", k.short()), st)
-                };
-                lines.push(Line::from(vec![
-                    arrow,
-                    Span::styled("Type: ", label_style),
-                    opt(NodeKind::Spoke),
-                    Span::styled("│", dim),
-                    opt(NodeKind::Hub),
-                    Span::styled(if active { "   ←/→ toggle" } else { "" }, dim),
-                ]));
+                spans.push(chip(NodeKind::Spoke.short(), *kind == NodeKind::Spoke));
+                spans.push(Span::raw("  "));
+                spans.push(chip(NodeKind::Hub.short(), *kind == NodeKind::Hub));
             }
             FieldKind::Key(src) => {
-                let dim = Style::default().add_modifier(Modifier::DIM);
-                let opt = |k: KeySource| {
-                    let st = if k == *src {
-                        Style::default()
-                            .fg(Color::Cyan)
-                            .add_modifier(Modifier::BOLD | Modifier::REVERSED)
-                    } else {
-                        dim
-                    };
-                    Span::styled(format!(" {} ", k.short()), st)
-                };
-                lines.push(Line::from(vec![
-                    arrow,
-                    Span::styled("Key:  ", label_style),
-                    opt(KeySource::Generate),
-                    Span::styled("│", dim),
-                    opt(KeySource::Paste),
-                    Span::styled(if active { "   ←/→ toggle" } else { "" }, dim),
-                ]));
+                spans.push(chip(
+                    KeySource::Generate.short(),
+                    *src == KeySource::Generate,
+                ));
+                spans.push(Span::raw("  "));
+                spans.push(chip(KeySource::Paste.short(), *src == KeySource::Paste));
             }
-            FieldKind::Pick { options, idx } => {
-                let dim = Style::default().add_modifier(Modifier::DIM);
-                let chosen = if options.is_empty() {
-                    Span::styled(" (no hubs yet - create one first) ", dim)
-                } else {
-                    Span::styled(
-                        format!(" {} ", options[*idx]),
-                        Style::default()
-                            .fg(Color::Cyan)
-                            .add_modifier(Modifier::BOLD | Modifier::REVERSED),
-                    )
-                };
-                let counter = if options.len() > 1 {
-                    format!("  ({}/{})", idx + 1, options.len())
-                } else {
-                    String::new()
-                };
-                lines.push(Line::from(vec![
-                    arrow,
-                    Span::styled(format!("{}: ", field.label), label_style),
-                    chosen,
-                    Span::styled(counter, dim),
-                    Span::styled(
-                        if active && options.len() > 1 {
-                            "   ←/→ choose"
-                        } else {
-                            ""
-                        },
-                        dim,
-                    ),
-                ]));
-            }
+            // A pick is one value out of a list, not a button: it is drawn as
+            // the value it holds, with guillemets saying it can be stepped.
+            FieldKind::Pick { options, idx } => match options.get(*idx) {
+                None => spans.push(Span::styled(field.hint.clone(), dim)),
+                Some(chosen) => {
+                    let steps = options.len() > 1;
+                    let mut style = Style::default().fg(Color::Cyan);
+                    if active {
+                        style = style.add_modifier(Modifier::BOLD);
+                    }
+                    spans.push(Span::styled(if steps { "‹ " } else { "" }, dim));
+                    spans.push(Span::styled(chosen.clone(), style));
+                    spans.push(Span::styled(if steps { " ›" } else { "" }, dim));
+                }
+            },
             FieldKind::Text => {
-                let head = if field.default.is_empty() {
-                    format!("{}: ", field.label)
+                if field.value.is_empty() {
+                    spans.push(Span::raw(if active { "█ " } else { "" }));
+                    spans.push(Span::styled(field.placeholder(), dim));
                 } else {
-                    format!("{} [{}]: ", field.label, field.default)
-                };
-                let cursor = if active { "█" } else { "" };
-                lines.push(Line::from(vec![
-                    arrow,
-                    Span::styled(head, label_style),
-                    Span::raw(format!("{}{}", field.value, cursor)),
-                ]));
+                    spans.push(Span::raw(field.value.clone()));
+                    spans.push(Span::raw(if active { "█" } else { "" }));
+                }
             }
         }
+        lines.push(Line::from(spans));
+    }
+    // Hold the block open to its reserved height, so flipping Spoke<->Hub moves
+    // nothing but the fields themselves.
+    while lines.len() < p.body_rows() {
+        lines.push(Line::raw(""));
     }
     lines.push(Line::raw(""));
-    lines.push(box_hint(&format!(
-        "{CTRL_VIM_Y_MOVE} {Y_MOVE} move · {CTRL_VIM_X_MOVE} {X_MOVE} choose · enter next/submit · esc cancel"
-    )));
+    lines.push(box_hint(&hint));
     let para = Paragraph::new(lines)
         .block(box_block(Color::Cyan, &p.title))
         .wrap(Wrap { trim: false });

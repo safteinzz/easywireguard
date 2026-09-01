@@ -60,13 +60,23 @@ pub(super) enum FieldKind {
     Pick { options: Vec<String>, idx: usize },
 }
 
-/// One line in a wizard. `default` shows in brackets and is used when the field
-/// is left blank on submit.
+/// One line in a wizard: a label in the left column, a value in the right. The
+/// `default` is what a blank field submits, and stands in as the dim example
+/// until something is typed.
 pub(super) struct Field {
     pub(super) label: String,
     pub(super) default: String,
+    /// The dim example shown in the value column while the field is empty and
+    /// has no default: what the field wants, not what it is called. It lives
+    /// here rather than in the label so every label stays one short noun and
+    /// the values all start in the same column.
+    pub(super) hint: String,
     pub(super) value: String,
     pub(super) kind: FieldKind,
+    /// Marked with a red `*`, the form convention everyone already reads. Only
+    /// set it on a field the submit path actually refuses to go without, or the
+    /// star is a lie: everything unmarked can be left blank.
+    pub(super) required: bool,
 }
 
 impl Field {
@@ -74,32 +84,65 @@ impl Field {
         Self {
             label: label.into(),
             default: default.into(),
+            hint: String::new(),
             value: String::new(),
             kind: FieldKind::Text,
+            required: false,
         }
+    }
+
+    /// Builder: the submit path refuses a blank here, so it gets the red `*`.
+    pub(super) fn required(mut self) -> Self {
+        self.required = true;
+        self
+    }
+
+    /// Builder: the dim example shown while the field is empty. On a `Pick` it
+    /// is what stands in when there is nothing to choose from yet.
+    pub(super) fn hint(mut self, hint: &str) -> Self {
+        self.hint = hint.into();
+        self
+    }
+
+    /// What stands in the value column while the field is empty: what a blank
+    /// submits, then what it wants typed. Both are dim, and both are gone the
+    /// moment there is a value, so neither can be mistaken for one.
+    pub(super) fn placeholder(&self) -> String {
+        [self.default.as_str(), self.hint.as_str()]
+            .iter()
+            .filter(|s| !s.is_empty())
+            .copied()
+            .collect::<Vec<_>>()
+            .join("  ")
     }
     pub(super) fn type_toggle(kind: NodeKind) -> Self {
         Self {
             label: "Type".into(),
             default: String::new(),
+            hint: String::new(),
             value: String::new(),
             kind: FieldKind::Type(kind),
+            required: false,
         }
     }
     pub(super) fn key_toggle(src: KeySource) -> Self {
         Self {
             label: "Key".into(),
             default: String::new(),
+            hint: String::new(),
             value: String::new(),
             kind: FieldKind::Key(src),
+            required: false,
         }
     }
     pub(super) fn pick(label: &str, options: Vec<String>) -> Self {
         Self {
             label: label.into(),
             default: String::new(),
+            hint: String::new(),
             value: String::new(),
             kind: FieldKind::Pick { options, idx: 0 },
+            required: false,
         }
     }
     /// A choice field (Type/Key toggle or Pick): ←/→ cycles it, letters don't type.
@@ -170,18 +213,27 @@ impl Prompt {
     pub(super) fn base_fields(kind: NodeKind, default_addr: &str, hubs: &[String]) -> Vec<Field> {
         let mut fields = vec![
             Field::type_toggle(kind),
-            Field::new("Name", ""),
-            Field::new("Address (interface IP/prefix)", default_addr),
+            Field::new("Name", "")
+                .required()
+                .hint("e.g. phone, laptop, vps"),
+            Field::new("Address", default_addr),
         ];
         match kind {
             NodeKind::Spoke => {
-                fields.push(Field::new("DNS (optional - e.g. a Pi-hole)", ""));
-                fields.push(Field::pick("Hub to dial", hubs.to_vec()));
+                fields.push(Field::new("DNS", "").hint("e.g. a Pi-hole"));
+                fields.push(
+                    Field::pick("Hub to dial", hubs.to_vec())
+                        .hint("no hubs yet - create one first"),
+                );
             }
             NodeKind::Hub => {
-                fields.push(Field::new("Endpoint (host:port peers dial)", ""));
-                fields.push(Field::new("Allowed-IPs peers route here", "0.0.0.0/0"));
-                fields.push(Field::new("Keepalive seconds (optional)", ""));
+                fields.push(
+                    Field::new("Endpoint", "")
+                        .required()
+                        .hint("host:port peers dial"),
+                );
+                fields.push(Field::new("Allowed-IPs", "0.0.0.0/0"));
+                fields.push(Field::new("Keepalive", "").hint("seconds, e.g. 25"));
             }
         }
         fields
@@ -196,7 +248,11 @@ impl Prompt {
                 "Private key",
                 vec!["store in mesh.toml".into(), "redact (QR/file only)".into()],
             )),
-            KeySource::Paste => fields.push(Field::new("Public key (paste existing)", "")),
+            KeySource::Paste => fields.push(
+                Field::new("Public key", "")
+                    .required()
+                    .hint("paste an existing pubkey"),
+            ),
         }
         fields
     }
@@ -270,6 +326,33 @@ impl Prompt {
             p.set_pick("Hub to dial", h);
         }
         p
+    }
+
+    /// Rows the field block takes: one per field, plus the blank that sets the
+    /// key material off from the metadata, and never fewer than the tallest
+    /// shape this wizard can rebuild into - a Hub carries one field more than a
+    /// Spoke, and a frame that grows under the cursor reads as ←/→ having done
+    /// something to the box rather than to the toggle.
+    ///
+    /// The floor is measured off the constructors rather than counted by hand,
+    /// so a field added to either shape cannot leave this number behind.
+    pub(super) fn body_rows(&self) -> usize {
+        let keyed = self
+            .fields
+            .iter()
+            .any(|f| matches!(f.kind, FieldKind::Key(_)));
+        let floor = match self.action {
+            Action::AddNode | Action::EditNode { .. } => {
+                Self::base_fields(NodeKind::Hub, "", &[]).len()
+                    + if keyed {
+                        Self::key_fields(KeySource::Generate).len()
+                    } else {
+                        0
+                    }
+            }
+            _ => 0,
+        };
+        floor.max(self.fields.len()) + usize::from(keyed)
     }
 
     /// Cycle the current Pick field by `delta` (no-op on other field kinds).
