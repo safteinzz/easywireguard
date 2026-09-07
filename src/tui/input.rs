@@ -87,7 +87,7 @@ impl App {
                 // keep the box open so "copied" shows while it's still on screen
                 match copy_clipboard(&text) {
                     Some(tool) => self.set_status(format!("copied to clipboard ({tool})")),
-                    None => self.set_status("no clipboard tool - install wl-clipboard or xclip"),
+                    None => self.set_failed("no clipboard tool - install wl-clipboard or xclip"),
                 }
             } else if let Some(action) = confirm {
                 self.overlay = None;
@@ -159,7 +159,7 @@ impl App {
             KeyCode::Char('e') => {
                 let hubs = self.hub_names();
                 let Some(node) = self.selected_mesh_node() else {
-                    self.set_status("no node selected");
+                    self.set_failed("no node selected");
                     return;
                 };
                 self.prompt = Some(Prompt::edit_node(node, &hubs));
@@ -168,7 +168,7 @@ impl App {
             KeyCode::Char('E') => self.open_export(),
             KeyCode::Char('i') => {
                 let Some(name) = self.selected_mesh_node().map(|n| n.name.clone()) else {
-                    self.set_status("no node selected");
+                    self.set_failed("no node selected");
                     return;
                 };
                 match Manifest::load_or_empty(&self.manifest_path) {
@@ -182,12 +182,12 @@ impl App {
                         }
                         None => self.set_status("node vanished"),
                     },
-                    Err(e) => self.set_status(format!("couldn't load manifest: {e}")),
+                    Err(e) => self.set_failed(format!("couldn't load manifest: {e}")),
                 }
             }
             KeyCode::Char('d') => {
                 let Some(name) = self.selected_mesh_node().map(|n| n.name.clone()) else {
-                    self.set_status("no node selected");
+                    self.set_failed("no node selected");
                     return;
                 };
                 self.overlay = Some(Overlay::Confirm {
@@ -198,17 +198,17 @@ impl App {
             }
             KeyCode::Enter => {
                 let Some(name) = self.selected_mesh_node().map(|n| n.name.clone()) else {
-                    self.set_status("no node selected");
+                    self.set_failed("no node selected");
                     return;
                 };
                 match Manifest::load_or_empty(&self.manifest_path) {
                     Ok(m) => self.show_qr(&m, name),
-                    Err(e) => self.set_status(format!("couldn't load manifest: {e}")),
+                    Err(e) => self.set_failed(format!("couldn't load manifest: {e}")),
                 }
             }
             KeyCode::Char('g') => match self.gen_all() {
                 Ok(n) => self.set_status(format!("wrote {n} configs to ./out")),
-                Err(e) => self.set_status(format!("gen failed: {e}")),
+                Err(e) => self.set_failed(format!("gen failed: {e}")),
             },
             KeyCode::Char('r') => self.reload("reloaded manifest"),
             _ => {}

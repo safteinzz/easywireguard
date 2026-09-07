@@ -24,14 +24,14 @@ impl App {
         match m.remove(name) {
             Ok(()) => {
                 if let Err(e) = m.save(&self.manifest_path) {
-                    self.set_status(format!("save failed: {e}"));
+                    self.set_failed(format!("save failed: {e}"));
                     return;
                 }
                 self.nodes = m.nodes;
                 Self::clamp(&mut self.node_state, self.nodes.len());
                 self.set_status(format!("deleted `{name}`"));
             }
-            Err(e) => self.set_status(format!("delete failed: {e}")),
+            Err(e) => self.set_failed(format!("delete failed: {e}")),
         }
     }
 
@@ -72,7 +72,7 @@ impl App {
                     dark,
                 });
             }
-            Err(e) => self.set_status(format!("QR failed: {e}")),
+            Err(e) => self.set_failed(format!("QR failed: {e}")),
         }
     }
 
@@ -98,7 +98,7 @@ impl App {
     /// hub/Ansible must be updated to keep accepting it.
     pub(super) fn rotate_selected(&mut self) {
         let Some(name) = self.selected_mesh_node().map(|n| n.name.clone()) else {
-            self.set_status("no node selected");
+            self.set_failed("no node selected");
             return;
         };
         let mut m = match Manifest::load_or_empty(&self.manifest_path) {
@@ -112,7 +112,7 @@ impl App {
         let public = match keys::public_from_private(&private) {
             Ok(p) => p,
             Err(e) => {
-                self.set_status(format!("keygen failed: {e}"));
+                self.set_failed(format!("keygen failed: {e}"));
                 return;
             }
         };
@@ -124,7 +124,7 @@ impl App {
         node.public_key = public;
         node.private_key = was_stored.then(|| private.clone()); // preserve stored/redacted choice
         if let Err(e) = m.save(&self.manifest_path) {
-            self.set_status(format!("save failed: {e}"));
+            self.set_failed(format!("save failed: {e}"));
             return;
         }
         let node_ref = m.nodes.iter().find(|n| n.name == name).unwrap();
@@ -140,7 +140,7 @@ impl App {
     /// Open the Export menu for the selected node.
     pub(super) fn open_export(&mut self) {
         let Some(name) = self.selected_mesh_node().map(|n| n.name.clone()) else {
-            self.set_status("no node selected");
+            self.set_failed("no node selected");
             return;
         };
         let items = vec![
@@ -184,13 +184,13 @@ impl App {
             }
             ExportKind::Install => {
                 if redacted {
-                    self.set_status("redacted node has no private key - rotate first");
+                    self.set_failed("redacted node has no private key - rotate first");
                     return;
                 }
                 let path = format!("/etc/wireguard/{name}.conf");
                 match std::fs::write(&path, &cfg) {
                     Ok(()) => self.set_status(format!("installed {path} (wg-quick up {name})")),
-                    Err(e) => self.set_status(format!("can't write {path}: {e} (need sudo ewg?)")),
+                    Err(e) => self.set_failed(format!("can't write {path}: {e} (need sudo ewg?)")),
                 }
             }
             ExportKind::Qr => self.show_qr_config(name, &cfg),

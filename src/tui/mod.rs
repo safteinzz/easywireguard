@@ -57,7 +57,7 @@ use widgets::{
     tilde, titled, wrapped_height,
 };
 
-const STATUS_TTL: Duration = Duration::from_millis(1500);
+const STATUS_TTL: Duration = Duration::from_secs(3);
 
 // Movement key labels, split so each view states exactly the chord it accepts and
 // they still read the same everywhere. `Y` = vertical, `X` = horizontal; `VIM_` is
@@ -103,6 +103,9 @@ pub(super) struct App {
     view: View,
     should_quit: bool,
     status: String,
+    /// Whether the message on screen is a failure, which is all that decides
+    /// its colour.
+    pub(super) status_failed: bool,
     status_at: Option<Instant>,
 
     dirs: Vec<PathBuf>,
@@ -130,6 +133,7 @@ impl App {
             view: View::Interfaces,
             should_quit: false,
             status: String::new(),
+            status_failed: false,
             status_at: None,
             dirs: dirs.to_vec(),
             ifaces: wg::interfaces(dirs).unwrap_or_default(),
@@ -145,10 +149,20 @@ impl App {
         app
     }
 
-    /// Set the transient status line; it fades on its own after `STATUS_TTL`.
+    /// Set the transient status line for something that worked; it fades on its
+    /// own after `STATUS_TTL`.
     pub(super) fn set_status(&mut self, msg: impl Into<String>) {
         self.status = msg.into();
         self.status_at = Some(Instant::now());
+        self.status_failed = false;
+    }
+
+    /// The same line for something that did not. Yellow, the same yellow an
+    /// alert uses: red is reserved for a gate in front of something about to be
+    /// lost, and this has already happened.
+    pub(super) fn set_failed(&mut self, msg: impl Into<String>) {
+        self.set_status(msg);
+        self.status_failed = true;
     }
 
     /// The status message while still fresh; `None` once it has expired.

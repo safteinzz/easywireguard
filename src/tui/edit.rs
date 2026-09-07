@@ -133,7 +133,7 @@ pub(super) fn run_editor<B: Backend>(
         Ok(_) => app.editor_done(req),
         Err(e) => {
             let _ = std::fs::remove_file(&req.tmp);
-            app.set_status(format!(
+            app.set_failed(format!(
                 "couldn't launch editor `{}`: {e}",
                 editor.to_string_lossy()
             ));

@@ -44,7 +44,7 @@ impl App {
                     seed: SKELETON.to_string(),
                 })
             }
-            Err(e) => self.set_status(format!("can't open an editor buffer: {e}")),
+            Err(e) => self.set_failed(format!("can't open an editor buffer: {e}")),
         }
     }
 
@@ -52,13 +52,13 @@ impl App {
     /// contents and open `$EDITOR`. On save we prompt for the name (rename-aware).
     pub(super) fn start_edit_conf(&mut self) {
         let Some(iface) = self.selected_iface().cloned() else {
-            self.set_status("no interface selected");
+            self.set_failed("no interface selected");
             return;
         };
         let content = match std::fs::read_to_string(&iface.path) {
             Ok(t) => t,
             Err(e) => {
-                self.set_status(format!("can't read {}: {e}", iface.path.display()));
+                self.set_failed(format!("can't read {}: {e}", iface.path.display()));
                 return;
             }
         };
@@ -71,7 +71,7 @@ impl App {
                     seed: content,
                 })
             }
-            Err(e) => self.set_status(format!("can't open an editor buffer: {e}")),
+            Err(e) => self.set_failed(format!("can't open an editor buffer: {e}")),
         }
     }
 
@@ -119,7 +119,7 @@ impl App {
                     seed: content,
                 })
             }
-            Err(e) => self.set_status(format!("can't reopen editor: {e}")),
+            Err(e) => self.set_failed(format!("can't reopen editor: {e}")),
         }
     }
 
@@ -166,7 +166,7 @@ impl App {
     /// running interface must be brought down (its `.conf` is what downs it) first.
     pub(super) fn confirm_delete_iface(&mut self) {
         let Some(iface) = self.selected_iface() else {
-            self.set_status("no interface selected");
+            self.set_failed("no interface selected");
             return;
         };
         if iface.up {
@@ -193,7 +193,7 @@ impl App {
                 let name = stem(&path);
                 self.reload(format!("deleted `{name}.conf` (.bak kept)"));
             }
-            Err(e) => self.set_status(format!(
+            Err(e) => self.set_failed(format!(
                 "can't delete {}: {e} (need sudo ewg?)",
                 path.display()
             )),
@@ -203,11 +203,11 @@ impl App {
     /// Toggle whether the selected interface starts on boot (systemd).
     pub(super) fn toggle_boot(&mut self) {
         let Some(iface) = self.selected_iface().cloned() else {
-            self.set_status("no interface selected");
+            self.set_failed("no interface selected");
             return;
         };
         match iface.enabled {
-            None => self.set_status("can't manage boot state - systemd/systemctl not available"),
+            None => self.set_failed("can't manage boot state - systemd/systemctl not available"),
             Some(enabled) => match wg::set_boot(&iface.name, !enabled) {
                 Ok(()) => {
                     let name = iface.name.clone();
@@ -217,7 +217,7 @@ impl App {
                     ));
                     self.select_iface(&name);
                 }
-                Err(e) => self.set_status(format!("{e} (need sudo ewg?)")),
+                Err(e) => self.set_failed(format!("{e} (need sudo ewg?)")),
             },
         }
     }
@@ -226,13 +226,13 @@ impl App {
     /// appended when the interface is up (handshakes, transfer, peers).
     pub(super) fn inspect_iface(&mut self) {
         let Some(iface) = self.selected_iface().cloned() else {
-            self.set_status("no interface selected");
+            self.set_failed("no interface selected");
             return;
         };
         let mut body = match std::fs::read_to_string(&iface.path) {
             Ok(t) => t,
             Err(e) => {
-                self.set_status(format!("can't read {}: {e}", iface.path.display()));
+                self.set_failed(format!("can't read {}: {e}", iface.path.display()));
                 return;
             }
         };

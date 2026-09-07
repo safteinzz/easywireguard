@@ -73,7 +73,7 @@ impl App {
         }
         backup(&target); // keep any file we're about to clobber
         if let Err(e) = std::fs::write(&target, &content) {
-            self.set_status(format!(
+            self.set_failed(format!(
                 "can't write {}: {e} (need sudo ewg?)",
                 target.display()
             ));
@@ -175,7 +175,7 @@ impl App {
                         (public, stored, Some(private))
                     }
                     Err(e) => {
-                        self.set_status(format!("keygen failed: {e}"));
+                        self.set_failed(format!("keygen failed: {e}"));
                         self.prompt = Some(prompt);
                         return;
                     }
@@ -207,7 +207,7 @@ impl App {
             let _ = m.remove(o);
         }
         if let Err(e) = m.add(node) {
-            self.set_status(format!(
+            self.set_failed(format!(
                 "{} failed: {e}",
                 if editing { "edit" } else { "add" }
             ));
@@ -215,7 +215,7 @@ impl App {
             return;
         }
         if let Err(e) = m.save(&self.manifest_path) {
-            self.set_status(format!("save failed: {e}"));
+            self.set_failed(format!("save failed: {e}"));
             return;
         }
 

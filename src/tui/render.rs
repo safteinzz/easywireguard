@@ -147,7 +147,16 @@ pub(super) fn render_body(f: &mut Frame, area: Rect, app: &mut App) {
 
 pub(super) fn render_status(f: &mut Frame, area: Rect, app: &App) {
     let (text, style) = match app.live_status() {
-        Some(msg) => (msg.to_string(), Style::default().fg(Color::Green)),
+        // Green for what worked, yellow for what did not, and never red: red
+        // means a gate in front of something you are about to lose.
+        Some(msg) => (
+            msg.to_string(),
+            Style::default().fg(if app.status_failed {
+                Color::Yellow
+            } else {
+                Color::Green
+            }),
+        ),
         None => (
             app.view.hints(),
             Style::default().add_modifier(Modifier::DIM),
