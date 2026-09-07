@@ -59,13 +59,9 @@ use widgets::{
 
 const STATUS_TTL: Duration = Duration::from_secs(3);
 
-// Movement key labels, split so each view states exactly the chord it accepts and
-// they still read the same everywhere. `Y` = vertical, `X` = horizontal; `VIM_` is
-// the letter form, plain is the arrow form. Lists take either (`VIM_Y_MOVE Y_MOVE`
-// -> "j/k ↑↓"). The wizard names the arrows only: bare letters are typed into its
-// fields, so its letter form is the ctrl- chord, and a form that has to teach a
-// chord on the row you are standing on is a form with too much on it. The chords
-// still work, they are just not what a wizard's key line is for.
+// Movement key labels. `Y` is vertical, `X` horizontal; `VIM_` is the letter
+// form and plain is the arrow form, and a list takes either. The wizard names
+// the arrows only, since bare letters are typed into its fields.
 const Y_MOVE: &str = "↑↓";
 const X_MOVE: &str = "←→";
 const VIM_Y_MOVE: &str = "j/k";
