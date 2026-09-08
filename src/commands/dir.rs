@@ -12,10 +12,10 @@ pub struct DirArgs {
     #[command(subcommand)]
     action: Option<DirAction>,
     /// Verbose: show each dir's .conf count
-    #[arg(short, long, global = true)]
+    #[arg(short, long)]
     verbose: bool,
     /// Machine-readable JSON
-    #[arg(long, global = true)]
+    #[arg(long)]
     json: bool,
 }
 
@@ -23,10 +23,16 @@ pub struct DirArgs {
 pub enum DirAction {
     /// Register a directory that holds .conf files  <PATH>
     #[command(verbatim_doc_comment)]
-    Add { path: PathBuf },
+    Add {
+        /// A directory holding `.conf` files
+        path: PathBuf,
+    },
     /// Unregister a directory  <PATH>
     #[command(verbatim_doc_comment)]
-    Rm { path: PathBuf },
+    Rm {
+        /// A registered directory to stop scanning
+        path: PathBuf,
+    },
     /// List the directories being scanned (same as bare `dir`)
     #[command(visible_alias = "ls")]
     List,

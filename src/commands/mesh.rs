@@ -13,10 +13,10 @@ pub struct MeshArgs {
     #[command(subcommand)]
     action: Option<MeshAction>,
     /// Verbose: show address and endpoint, not just names
-    #[arg(short, long, global = true)]
+    #[arg(short, long)]
     verbose: bool,
     /// Machine-readable JSON
-    #[arg(long, global = true)]
+    #[arg(long)]
     json: bool,
     /// Manifest file to read/edit
     #[arg(short = 'm', long, global = true, default_value = "mesh.toml")]
@@ -26,14 +26,18 @@ pub struct MeshArgs {
 #[derive(Subcommand)]
 #[allow(clippy::large_enum_variant)] // clap arg enums: boxing fights the derive
 pub enum MeshAction {
-    /// Add a node to the manifest  <NAME>
+    /// Add a node to the manifest  --address <ADDRESS> --pubkey <PUBKEY> <NAME>
     #[command(verbatim_doc_comment)]
     Add {
+        /// What to call this node; its generated config is named after it
         name: String,
+        /// This node's address inside the mesh, with a prefix (e.g. 10.0.0.2/32)
         #[arg(long)]
         address: String,
+        /// This node's public key, as `ewg key` prints one
         #[arg(long)]
         pubkey: String,
+        /// host:port that peers dial to reach it; a node with one is a hub
         #[arg(long)]
         endpoint: Option<String>,
         /// What peers route TO this node: `0.0.0.0/0` (full-tunnel exit) or a LAN
@@ -50,16 +54,22 @@ pub enum MeshAction {
         /// for a hub (one with an endpoint), which meshes with everyone.
         #[arg(long = "hub")]
         hub: Vec<String>,
+        /// This node's private key, written into its own generated config
         #[arg(long)]
         private: Option<String>,
+        /// Command wg-quick runs after this node's interface comes up
         #[arg(long)]
         postup: Option<String>,
+        /// Command wg-quick runs after this node's interface goes down
         #[arg(long)]
         postdown: Option<String>,
     },
     /// Remove a node  <NAME>
     #[command(verbatim_doc_comment)]
-    Rm { name: String },
+    Rm {
+        /// The node to remove from the manifest
+        name: String,
+    },
     /// List nodes in the manifest (same as bare `mesh`)
     #[command(visible_alias = "ls")]
     List,
@@ -67,6 +77,7 @@ pub enum MeshAction {
     ///   -o DIR   output directory (default: current directory)
     #[command(verbatim_doc_comment)]
     Gen {
+        /// Where to write the configs (default: the current directory)
         #[arg(short, long, default_value = ".")]
         out: PathBuf,
     },

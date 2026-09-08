@@ -1,4 +1,8 @@
 //! ewg - wireguard config generation and management without the hand-editing.
+//!
+//! This file is the clap `Cmd` enum and the dispatch match; what you can run is
+//! `ewg --help`, which renders from the manifest, those doc comments and
+//! `AFTER`, and is the only copy of that list.
 
 mod commands;
 mod elevate;
@@ -16,12 +20,23 @@ use commands::mesh::MeshArgs;
 use std::io::IsTerminal;
 use std::path::PathBuf;
 
+/// clap's own layout with one change: `{before-help}` moves from above the
+/// description to just under `Usage:`, so the shapes block lands on top of the
+/// command list rather than on top of the screen.
+const TEMPLATE: &str =
+    "{about-with-newline}\n{usage-heading} {usage}\n\n{before-help}{all-args}{after-help}\n";
+
+/// The one shape clap cannot list, because the TUI is the bare invocation.
+const WAYS: &str = "\x1b[1mWays to run it (not subcommands):\x1b[0m
+  ewg    the interface manager TUI, across every registered dir";
+
+/// The rest of the block: what a script can expect, then where to look next.
 const AFTER: &str = concat!(
-    "Run bare `ewg` for the interface manager TUI. `dir` registers \
-     where your .conf files live so `list`/`up`/`down`/`status`/TUI \
-     span them all. `mesh` edits a manifest; `mesh gen` turns it into \
-     each node's config as \"all peers minus itself\". `qr` renders any \
-     config (a .conf or a mesh node) as a scannable QR for a phone.",
+    "\
+Output is written for people, and `dir` and `mesh` take `--json` when something
+has to read it; `check` is the machine-facing one and exits non-zero when a
+config is broken. Failures name themselves on stderr and exit non-zero.
+Run `ewg <command> --help` for a command's details.",
     "\n\n",
     env!("CARGO_PKG_REPOSITORY"),
     "\ncontributors: ",
@@ -43,14 +58,19 @@ const LONG_VERSION: &str = concat!(
 
 #[derive(Parser)]
 #[command(
-    name = "ewg",
+    name = "easywireguard",
+    bin_name = "ewg",
     version,
     long_version = LONG_VERSION,
     about,
+    // The shapes come first: this is a bare-first binary, so the command list is
+    // the leftovers and putting it on top answers the wrong question first.
+    help_template = TEMPLATE,
+    before_help = WAYS,
     after_help = AFTER
 )]
 struct Cli {
-    /// Use only this dir for this run, overriding the registry (or set $EWG_DIR)
+    /// Use only this dir for this run, overriding the registry
     #[arg(long, global = true, env = "EWG_DIR")]
     dir: Option<PathBuf>,
 
@@ -61,12 +81,10 @@ struct Cli {
 #[derive(Subcommand)]
 #[allow(clippy::large_enum_variant)] // clap arg enums: boxing fights the derive
 enum Cmd {
-    /// Interface manager TUI (also the default with no subcommand)
+    /// Interface manager TUI. Hidden because the bare invocation is the
+    /// documented way in, and two entries pointing at each other is repetition.
+    #[command(hide = true)]
     Tui,
-
-    /// Manage easywireguard itself: `self update` reinstalls, `self check` looks for a newer release
-    #[command(name = "self", subcommand)]
-    Selfie(selfcmd::Cmd),
 
     /// List every interface you can up/down across your dirs, with up/down state
     #[command(visible_alias = "ls")]
@@ -77,16 +95,33 @@ enum Cmd {
 
     /// Bring an interface up  <NAME>
     #[command(verbatim_doc_comment)]
-    Up { name: String },
+    Up {
+        /// The interface to bring up, named by its `.conf` without the extension
+        name: String,
+    },
 
     /// Bring an interface down  <NAME>
     #[command(verbatim_doc_comment)]
-    Down { name: String },
+    Down {
+        /// The interface to bring down, named by its `.conf` without the extension
+        name: String,
+    },
 
-    /// List registered config directories (bare = list; -v verbose; add/rm to edit)
+    /// Register where your .conf files live, so every other command spans them
+    ///   dir                         list them (-v counts configs, --json for a script)
+    ///   dir add <PATH>              register a directory
+    ///   dir rm <PATH>               forget one
+    #[command(verbatim_doc_comment)]
     Dir(DirArgs),
 
-    /// Design a mesh: add/list/rm nodes in a manifest, then gen the configs
+    /// Design a mesh: nodes in a manifest, then each node's config
+    ///   mesh                        list the nodes (-m picks the manifest)
+    ///   mesh add <NAME>             add a node
+    ///     --address <ADDRESS>       its address in the mesh, required
+    ///     --pubkey <PUBKEY>         its public key, required
+    ///   mesh rm <NAME>              remove one
+    ///   mesh gen                    write each config, as "all peers minus itself"
+    #[command(verbatim_doc_comment)]
     Mesh(MeshArgs),
 
     /// Generate a new WireGuard keypair (private + public)
@@ -97,12 +132,14 @@ enum Cmd {
 
     /// Derive the public key from a private key  <PRIVATE>
     #[command(verbatim_doc_comment)]
-    Pubkey { private: String },
+    Pubkey {
+        /// A base64 private key, as `ewg key` and `wg genkey` print one
+        private: String,
+    },
 
-    /// Render a wg config as a scannable QR - a .conf file or a manifest node
-    ///   ewg qr <path.conf>           QR for that file (scan into the wg app)
-    ///   ewg qr <node> -m mesh.toml   QR for that node's generated config
-    ///   -o FILE.png                  also write a PNG
+    /// Render a wg config as a scannable QR - a .conf file or a manifest node  <TARGET>
+    ///   ewg qr <path.conf>          QR for that file (scan into the wg app)
+    ///   ewg qr <node> -m mesh.toml  QR for that node's generated config
     #[command(verbatim_doc_comment)]
     Qr {
         /// A `.conf` file path, or a node name in the manifest
@@ -117,13 +154,17 @@ enum Cmd {
 
     /// Validate WireGuard configs, exit non-zero if any is broken  <PATH>...
     ///   ewg check ~/wg/home.conf
-    ///   ewg check /etc/wireguard/*.conf   # sanity-check a whole dir in CI
+    ///   ewg check /etc/wireguard/*.conf
     #[command(verbatim_doc_comment)]
     Check {
         /// One or more `.conf` files to validate
-        #[arg(required = true)]
+        #[arg(required = true, value_name = "PATH")]
         paths: Vec<PathBuf>,
     },
+
+    /// Manage easywireguard itself: `self update` reinstalls, `self check` looks for a newer release
+    #[command(name = "self", subcommand)]
+    Selfie(selfcmd::Cmd),
 }
 
 fn main() -> Result<()> {
