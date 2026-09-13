@@ -68,31 +68,33 @@ PNG, or an Ansible peer entry.
 The TUI wraps these; call them directly to automate.
 
 ```bash
-# interfaces
-ewg list | status | up <name> | down <name>
-ewg dir add <path>                 # register where .conf files live (not just /etc/wireguard)
-ewg check /etc/wireguard/*.conf    # validate configs, non-zero exit if any is broken
-
-# keys
-ewg key | psk | pubkey <PRIVATE>
-
-# mesh: design, then generate each node's config
-ewg mesh add flint --address 10.10.1.1/24 --pubkey <PUB> \
-    --endpoint vpn.example.com:51820 --allowed-ips 0.0.0.0/0     # a hub / exit
-ewg mesh add phone --address 10.10.1.3/24 --pubkey <PUB> \
-    --hub flint --dns 10.10.1.1 --keepalive 25 [--private <PRIV>]
-ewg mesh                           # list (-v verbose, --json; never prints private keys)
-ewg mesh rm <name>
-ewg mesh gen -o out/               # write every node's .conf
-
-# QR (onboard a phone)
-ewg qr <node> -m mesh.toml         # QR of that node's generated config
-ewg qr out/phone.conf -o phone.png # a .conf file, also written as a PNG
+ewg list                 # every interface across your dirs, up or down
+ewg status               # only the ones up, with their live wireguard status
+ewg up <name>            # bring one up
+ewg down <name>          # and take it down
+ewg dir add <path>       # register where .conf files live, not just /etc/wireguard
+ewg check <path>...      # validate configs, non-zero exit if one is broken
+ewg key                  # a new keypair
+ewg psk                  # a new preshared key
+ewg pubkey <private>     # the public half of a private key
+ewg mesh add <name> ...  # a node: --address and --pubkey, --endpoint for a hub
+ewg mesh gen -o out/     # write every node's .conf
+ewg qr <node>            # that node's config as a QR, for the phone app
 ```
 
-`--hub` (repeatable) makes a node a spoke of those hubs; omit it and a spoke
-reaches all hubs. `--private` is optional: omit it for a public-only manifest and
-inject keys later.
+Every command takes `--dir` to use one directory for that run, and
+`ewg <command> --help` has the rest, `mesh add`'s hub, exit and DNS flags
+included.
+
+## Keys
+
+| key | does |
+| --- | --- |
+| `j` `k` / `↑` `↓` | move in the list |
+| `h` `l` / `←` `→` / `Tab` | switch tab |
+| `q` / `Esc` / `Ctrl-C` | quit |
+
+Each tab's own keys are on its bottom line.
 
 ## Notes
 
