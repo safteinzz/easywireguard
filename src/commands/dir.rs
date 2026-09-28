@@ -11,6 +11,13 @@ use clap::{Args, Subcommand};
 pub struct DirArgs {
     #[command(subcommand)]
     action: Option<DirAction>,
+    #[command(flatten)]
+    list: ListFlags,
+}
+
+/// How a listing prints, taken by the bare command and by `list` alike.
+#[derive(Args, Clone, Copy)]
+pub struct ListFlags {
     /// Verbose: show each dir's .conf count
     #[arg(short, long)]
     verbose: bool,
@@ -35,12 +42,16 @@ pub enum DirAction {
     },
     /// List the directories being scanned (same as bare `dir`)
     #[command(visible_alias = "ls")]
-    List,
+    List(ListFlags),
 }
 
 pub fn run(args: DirArgs) -> Result<()> {
     let path = registry::default_path()?;
     let mut reg = Registry::load(&path)?;
+    let flags = match &args.action {
+        Some(DirAction::List(f)) => *f,
+        _ => args.list,
+    };
     match args.action {
         Some(DirAction::Add { path: dir }) => {
             if reg.add(dir.clone()) {
@@ -58,11 +69,11 @@ pub fn run(args: DirArgs) -> Result<()> {
                 println!("{} was not registered", dir.display());
             }
         }
-        None | Some(DirAction::List) => {
+        None | Some(DirAction::List(_)) => {
             let dirs = reg.effective();
-            if args.json {
+            if flags.json {
                 println!("{}", serde_json::to_string_pretty(&dirs)?);
-            } else if args.verbose {
+            } else if flags.verbose {
                 for d in &dirs {
                     match conf_count(d) {
                         Some(n) => println!("{}  ({n} configs)", d.display()),

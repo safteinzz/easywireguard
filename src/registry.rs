@@ -121,7 +121,8 @@ mod tests {
 
     #[test]
     fn load_missing_file_is_empty_not_error() {
-        let r = Registry::load(Path::new("/no/such/file.toml")).unwrap();
+        let d = tempfile::tempdir().unwrap();
+        let r = Registry::load(&d.path().join("missing.toml")).unwrap();
         assert!(r.dirs.is_empty());
     }
 }

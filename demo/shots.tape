@@ -76,7 +76,7 @@ Enter
 Type "guest-phone"
 Enter
 Enter
-Type "10.10.1.1"
+Type "10.99.0.1"
 Enter
 Enter
 Enter

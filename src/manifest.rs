@@ -273,7 +273,7 @@ mod tests {
         let mut m = manifest();
         m.nodes[0].allowed_ips = Some("0.0.0.0/0".into()); // A is a full-tunnel exit
         m.nodes[0].keepalive = Some(25);
-        m.nodes[1].dns = Some("192.168.10.250".into()); // B uses a Pi-hole
+        m.nodes[1].dns = Some("192.0.2.53".into());
         let cfg_b = m.node_config(&m.nodes[1]);
         assert!(
             cfg_b.contains("AllowedIPs = 0.0.0.0/0"),
@@ -281,7 +281,7 @@ mod tests {
         );
         assert!(cfg_b.contains("PersistentKeepalive = 25"));
         assert!(
-            cfg_b.contains("DNS        = 192.168.10.250"),
+            cfg_b.contains("DNS        = 192.0.2.53"),
             "B's own interface DNS"
         );
         // and the default is still a /32 when unset (A's config, B has no override)

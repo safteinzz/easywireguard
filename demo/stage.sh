@@ -11,7 +11,8 @@
 #   ./stage.sh shell  a shell where `ewg` is this build, for a CLI shot
 #   ./stage.sh down   delete the stage
 #
-# Every address is from a range reserved for documentation (RFC 5737, RFC 3849),
+# Every address is from a range reserved for documentation (RFC 5737, RFC 3849)
+# except the mesh, which takes `ewg`'s own default `10.99.0.0/24`,
 # every hostname is example.com (RFC 2606), and every key is generated here by
 # this build and thrown away with the stage. There is nothing real to leak, and
 # nothing to configure: the tool's core is pure Rust, so unlike a rig for an ssh
@@ -156,19 +157,19 @@ keypair() {
 write_manifest() {
   local m="$STAGE/mesh.toml"
   keypair; VPS_PUB=$PUB
-  "$EWG" mesh -m "$m" add vps --address 10.10.1.1/24 --pubkey "$VPS_PUB" \
+  "$EWG" mesh -m "$m" add vps --address 10.99.0.1/24 --pubkey "$VPS_PUB" \
     --endpoint vpn.example.com:51820 --allowed-ips 0.0.0.0/0 --keepalive 25 > /dev/null
   keypair; HQ_PUB=$PUB
-  "$EWG" mesh -m "$m" add hq --address 10.10.1.2/24 --pubkey "$HQ_PUB" \
-    --endpoint hq.example.com:51820 --allowed-ips "10.10.1.2/32,192.0.2.0/24" > /dev/null
+  "$EWG" mesh -m "$m" add hq --address 10.99.0.2/24 --pubkey "$HQ_PUB" \
+    --endpoint hq.example.com:51820 --allowed-ips "10.99.0.2/32,192.0.2.0/24" > /dev/null
   keypair; LAPTOP_PUB=$PUB; LAPTOP_PRIV=$PRIV
-  "$EWG" mesh -m "$m" add laptop --address 10.10.1.3/24 --pubkey "$LAPTOP_PUB" \
+  "$EWG" mesh -m "$m" add laptop --address 10.99.0.3/24 --pubkey "$LAPTOP_PUB" \
     --private "$LAPTOP_PRIV" --hub vps > /dev/null
   keypair; PHONE_PUB=$PUB
-  "$EWG" mesh -m "$m" add phone --address 10.10.1.4/24 --pubkey "$PHONE_PUB" \
-    --private "$PRIV" --hub vps --dns 10.10.1.1 > /dev/null
+  "$EWG" mesh -m "$m" add phone --address 10.99.0.4/24 --pubkey "$PHONE_PUB" \
+    --private "$PRIV" --hub vps --dns 10.99.0.1 > /dev/null
   keypair; TABLET_PUB=$PUB
-  "$EWG" mesh -m "$m" add tablet --address 10.10.1.5/24 --pubkey "$TABLET_PUB" \
+  "$EWG" mesh -m "$m" add tablet --address 10.99.0.5/24 --pubkey "$TABLET_PUB" \
     --private "$PRIV" --hub hq > /dev/null
 }
 

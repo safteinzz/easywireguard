@@ -26,7 +26,16 @@ pub struct Iface {
 /// name exists in more than one dir the earlier dir wins (later ones are
 /// shadowed and skipped). Errors only if none of the dirs could be read.
 pub fn interfaces(dirs: &[PathBuf]) -> Result<Vec<Iface>> {
-    let active = active_interfaces().unwrap_or_default();
+    scan(dirs, &active_interfaces().unwrap_or_default(), boot_enabled)
+}
+
+/// [`interfaces`] with the live state handed in: `active` names what is up and
+/// `enabled` answers the boot question per name.
+fn scan(
+    dirs: &[PathBuf],
+    active: &BTreeSet<String>,
+    enabled: impl Fn(&str) -> Option<bool>,
+) -> Result<Vec<Iface>> {
     let mut found: BTreeMap<String, Iface> = BTreeMap::new();
     let mut any_readable = false;
     let mut last_err: Option<(PathBuf, std::io::Error)> = None;
@@ -51,7 +60,7 @@ pub fn interfaces(dirs: &[PathBuf]) -> Result<Vec<Iface>> {
                 found.entry(name.to_string()).or_insert_with(|| Iface {
                     name: name.to_string(),
                     up: active.contains(name),
-                    enabled: boot_enabled(name),
+                    enabled: enabled(name),
                     path: path.clone(),
                 });
             }
@@ -283,7 +292,7 @@ mod tests {
         std::fs::write(b.path().join("wg0.conf"), "").unwrap();
 
         let dirs = vec![a.path().to_path_buf(), b.path().to_path_buf()];
-        let names: Vec<_> = interfaces(&dirs)
+        let names: Vec<_> = scan(&dirs, &BTreeSet::new(), |_| None)
             .unwrap()
             .into_iter()
             .map(|i| i.name)
@@ -299,7 +308,7 @@ mod tests {
         std::fs::write(b.path().join("wg0.conf"), "").unwrap();
 
         let dirs = vec![a.path().to_path_buf(), b.path().to_path_buf()];
-        let ifaces = interfaces(&dirs).unwrap();
+        let ifaces = scan(&dirs, &BTreeSet::new(), |_| None).unwrap();
         assert_eq!(ifaces.len(), 1);
         assert!(ifaces[0].path.starts_with(a.path()), "first dir wins");
     }
@@ -335,8 +344,8 @@ mod tests {
     #[test]
     fn validate_config_accepts_a_real_config_and_flags_problems() {
         // A known-good key pair (from the keys tests) keeps the base64 checks honest.
-        let priv_k = "wFW7oUjIpLCfZW2UwsfTlLDGrZb9iJH3bK6nosB5IGI=";
-        let pub_k = "obuvsSP3vVFDjzrcwCWqgLmZeqEEVBGHIqzX3v4hYHA=";
+        let priv_k = "dwdtCnMYpX08FsFyUbJmRd9ML4frwJkqsXf7pR25LCo=";
+        let pub_k = "hSDwCYkwp1R0i33ctD73Wg2/Og0mOBr066SpjqqbTmo=";
         let good = format!(
             "[Interface]\nPrivateKey = {priv_k}\nAddress = 10.0.0.2/24\n\n[Peer]\nPublicKey = {pub_k}\nEndpoint = vpn.example:51820\nAllowedIPs = 0.0.0.0/0\n"
         );
@@ -388,7 +397,8 @@ mod tests {
 
     #[test]
     fn interfaces_all_unreadable_dirs_report_sudo() {
-        let e = interfaces(&[PathBuf::from("/nope/x")])
+        let d = tempfile::tempdir().unwrap();
+        let e = scan(&[d.path().join("missing")], &BTreeSet::new(), |_| None)
             .unwrap_err()
             .to_string();
         assert!(e.contains("sudo ewg"), "got: {e}");

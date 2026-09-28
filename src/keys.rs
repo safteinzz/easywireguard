@@ -88,9 +88,9 @@ mod tests {
 
     #[test]
     fn known_pair_matches_wireguard() {
-        // Generated with `wg genkey | wg pubkey` and verified.
-        let priv_key = "wFW7oUjIpLCfZW2UwsfTlLDGrZb9iJH3bK6nosB5IGI=";
-        let expected_pub = "obuvsSP3vVFDjzrcwCWqgLmZeqEEVBGHIqzX3v4hYHA=";
+        // RFC 7748 section 6.1, Alice.
+        let priv_key = "dwdtCnMYpX08FsFyUbJmRd9ML4frwJkqsXf7pR25LCo=";
+        let expected_pub = "hSDwCYkwp1R0i33ctD73Wg2/Og0mOBr066SpjqqbTmo=";
         assert_eq!(public_from_private(priv_key).unwrap(), expected_pub);
     }
 

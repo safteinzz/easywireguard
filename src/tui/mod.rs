@@ -125,6 +125,11 @@ impl App {
         let nodes = Manifest::load_or_empty(&manifest_path)
             .map(|m| m.nodes)
             .unwrap_or_default();
+        let ifaces = wg::interfaces(dirs).unwrap_or_default();
+        Self::new(dirs, ifaces, manifest_path, nodes)
+    }
+
+    fn new(dirs: &[PathBuf], ifaces: Vec<Iface>, manifest_path: PathBuf, nodes: Vec<Node>) -> Self {
         let mut app = App {
             view: View::Interfaces,
             should_quit: false,
@@ -132,7 +137,7 @@ impl App {
             status_failed: false,
             status_at: None,
             dirs: dirs.to_vec(),
-            ifaces: wg::interfaces(dirs).unwrap_or_default(),
+            ifaces,
             iface_state: ListState::default(),
             manifest_path,
             nodes,
@@ -223,19 +228,19 @@ impl App {
         self.set_status(msg);
     }
 
-    /// Suggest the next free `10.10.1.x/24` from the nodes already in the manifest.
+    /// Suggest the next free `10.99.0.x/24` from the nodes already in the manifest.
     pub(super) fn next_address(&self) -> String {
         let used: Vec<u8> = self
             .nodes
             .iter()
             .filter_map(|n| {
                 n.mesh_ip()
-                    .strip_prefix("10.10.1.")
+                    .strip_prefix("10.99.0.")
                     .and_then(|s| s.parse().ok())
             })
             .collect();
         let next = (1..=254).find(|c| !used.contains(c)).unwrap_or(1);
-        format!("10.10.1.{next}/24")
+        format!("10.99.0.{next}/24")
     }
 
     /// Names of the hubs (nodes with an endpoint) - the pickable targets for a spoke.
@@ -337,19 +342,13 @@ mod tests {
     use super::*;
 
     pub(super) fn app() -> App {
-        // Isolate tests from any real ./mesh.toml in the dev tree: start empty and
-        // point the manifest at a path that doesn't exist.
-        let mut a = App::load(&[]);
-        a.manifest_path = std::env::temp_dir().join("ewg-tests-no-such-mesh.toml");
-        a.nodes = Vec::new();
-        a.node_state.select(None);
-        a
+        App::new(&[], Vec::new(), PathBuf::new(), Vec::new())
     }
 
     pub(super) fn node(name: &str, ip: u8) -> Node {
         Node {
             name: name.into(),
-            address: format!("10.10.1.{ip}/24"),
+            address: format!("10.99.0.{ip}/24"),
             public_key: "PUB".into(),
             endpoint: None,
             allowed_ips: None,
@@ -366,11 +365,11 @@ mod tests {
     #[test]
     pub(super) fn next_address_picks_the_first_free_ip() {
         let mut a = app();
-        assert_eq!(a.next_address(), "10.10.1.1/24", "empty manifest -> .1");
+        assert_eq!(a.next_address(), "10.99.0.1/24", "empty manifest -> .1");
         a.nodes = vec![node("hub", 1), node("phone", 2), node("laptop", 4)];
         assert_eq!(
             a.next_address(),
-            "10.10.1.3/24",
+            "10.99.0.3/24",
             "skips .1/.2/.4, takes the gap"
         );
     }

@@ -12,15 +12,22 @@ use std::io::IsTerminal;
 pub struct MeshArgs {
     #[command(subcommand)]
     action: Option<MeshAction>,
+    #[command(flatten)]
+    list: ListFlags,
+    /// Manifest file to read/edit
+    #[arg(short = 'm', long, global = true, default_value = "mesh.toml")]
+    manifest: PathBuf,
+}
+
+/// How a listing prints, taken by the bare command and by `list` alike.
+#[derive(Args, Clone, Copy)]
+pub struct ListFlags {
     /// Verbose: show address and endpoint, not just names
     #[arg(short, long)]
     verbose: bool,
     /// Machine-readable JSON
     #[arg(long)]
     json: bool,
-    /// Manifest file to read/edit
-    #[arg(short = 'm', long, global = true, default_value = "mesh.toml")]
-    manifest: PathBuf,
 }
 
 #[derive(Subcommand)]
@@ -72,7 +79,7 @@ pub enum MeshAction {
     },
     /// List nodes in the manifest (same as bare `mesh`)
     #[command(visible_alias = "ls")]
-    List,
+    List(ListFlags),
     /// Generate each node's wg config from the manifest
     ///   -o DIR   output directory (default: current directory)
     #[command(verbatim_doc_comment)]
@@ -84,6 +91,10 @@ pub enum MeshAction {
 }
 
 pub fn run(args: MeshArgs) -> Result<()> {
+    let flags = match &args.action {
+        Some(MeshAction::List(f)) => *f,
+        _ => args.list,
+    };
     match args.action {
         Some(MeshAction::Add {
             name,
@@ -134,9 +145,9 @@ pub fn run(args: MeshArgs) -> Result<()> {
                 }
             }
         }
-        None | Some(MeshAction::List) => {
+        None | Some(MeshAction::List(_)) => {
             let m = Manifest::load_or_empty(&args.manifest)?;
-            if args.json {
+            if flags.json {
                 let view: Vec<_> = m
                     .nodes
                     .iter()
@@ -151,7 +162,7 @@ pub fn run(args: MeshArgs) -> Result<()> {
                     })
                     .collect();
                 println!("{}", serde_json::to_string_pretty(&view)?);
-            } else if args.verbose {
+            } else if flags.verbose {
                 for n in &m.nodes {
                     println!(
                         "{:<12} {:<16} {}",

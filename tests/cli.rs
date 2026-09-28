@@ -1,5 +1,6 @@
 //! End-to-end tests: drive the real `ewg` binary in temp sandboxes.
 
+use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::process::{Command, Output};
 
@@ -9,9 +10,12 @@ struct Sandbox {
 
 impl Sandbox {
     fn new() -> Self {
-        Sandbox {
+        let s = Sandbox {
             dir: tempfile::tempdir().unwrap(),
-        }
+        };
+        std::fs::create_dir(s.path("bin")).unwrap();
+        s.set_up(&[]);
+        s
     }
 
     fn path(&self, name: &str) -> PathBuf {
@@ -24,14 +28,33 @@ impl Sandbox {
         p
     }
 
+    /// Stands in for `wg`, reporting `names` as the interfaces that are up.
+    fn set_up(&self, names: &[&str]) {
+        let stub = self.write(
+            "bin/wg",
+            &format!(
+                "#!/bin/sh\n[ \"$1 $2\" = \"show interfaces\" ] && echo {}\nexit 0\n",
+                names.join(" ")
+            ),
+        );
+        std::fs::set_permissions(stub, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    /// `ewg` with nothing of the host's: its `PATH` holds only the stubs, so no
+    /// real `wg`, `systemctl` or `sudo` is reachable.
+    fn command(&self) -> Command {
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_ewg"));
+        cmd.current_dir(self.dir.path())
+            .env_clear()
+            .env("HOME", self.dir.path())
+            .env("PATH", self.path("bin"))
+            .env("EWG_NO_SUDO", "1")
+            .env("EWG_REGISTRY", self.path("registry.toml"));
+        cmd
+    }
+
     fn run(&self, args: &[&str]) -> Output {
-        Command::new(env!("CARGO_BIN_EXE_ewg"))
-            .args(args)
-            .current_dir(self.dir.path())
-            // isolate registry so tests never touch ~/.config
-            .env("EWG_REGISTRY", self.path("registry.toml"))
-            .output()
-            .unwrap()
+        self.command().args(args).output().unwrap()
     }
 
     fn ok(&self, args: &[&str]) -> String {
@@ -57,20 +80,20 @@ listen_port = 51820
 [[node]]
 name = "A"
 address = "10.10.0.1/24"
-public_key = "obuvsSP3vVFDjzrcwCWqgLmZeqEEVBGHIqzX3v4hYHA="
+public_key = "hSDwCYkwp1R0i33ctD73Wg2/Og0mOBr066SpjqqbTmo="
 endpoint = "vpn-a.example.com:51820"
-private_key = "wFW7oUjIpLCfZW2UwsfTlLDGrZb9iJH3bK6nosB5IGI="
+private_key = "dwdtCnMYpX08FsFyUbJmRd9ML4frwJkqsXf7pR25LCo="
 
 [[node]]
 name = "B"
 address = "10.10.0.2/24"
-public_key = "jEyKlv6hEMrKA5yzyFj6PYllHi2yNceWgXQ32HhuXCg="
+public_key = "3p7bfXt9wbTTW2HC7OQ1Nz+DQ8hbeGdNrfx+FG+IK08="
 endpoint = "vpn-b.example.com:51820"
 
 [[node]]
 name = "C"
 address = "10.10.0.3/24"
-public_key = "bnWs/u4aMMoN6C7/UkD/KdewhwBLFfcAsmroUlTVHnE="
+public_key = "PUB_C"
 endpoint = "vpn-c.example.com:51820"
 "#;
 
@@ -79,10 +102,10 @@ fn check_reports_ok_and_fails_on_a_broken_config() {
     let s = Sandbox::new();
     // A complete config with a known-good key pair -> ok, exit 0.
     let good = "[Interface]\n\
-        PrivateKey = wFW7oUjIpLCfZW2UwsfTlLDGrZb9iJH3bK6nosB5IGI=\n\
+        PrivateKey = dwdtCnMYpX08FsFyUbJmRd9ML4frwJkqsXf7pR25LCo=\n\
         Address = 10.0.0.2/24\n\n\
         [Peer]\n\
-        PublicKey = obuvsSP3vVFDjzrcwCWqgLmZeqEEVBGHIqzX3v4hYHA=\n\
+        PublicKey = hSDwCYkwp1R0i33ctD73Wg2/Og0mOBr066SpjqqbTmo=\n\
         Endpoint = vpn.example:51820\n\
         AllowedIPs = 0.0.0.0/0\n";
     s.write("good.conf", good);
@@ -93,7 +116,7 @@ fn check_reports_ok_and_fails_on_a_broken_config() {
     );
 
     // Missing PrivateKey -> exit non-zero, reason on stderr.
-    s.write("bad.conf", "[Interface]\nAddress = 10.0.0.2/24\n\n[Peer]\nPublicKey = obuvsSP3vVFDjzrcwCWqgLmZeqEEVBGHIqzX3v4hYHA=\n");
+    s.write("bad.conf", "[Interface]\nAddress = 10.0.0.2/24\n\n[Peer]\nPublicKey = hSDwCYkwp1R0i33ctD73Wg2/Og0mOBr066SpjqqbTmo=\n");
     let err = s.fails(&["check", "bad.conf"]);
     assert!(err.contains("PrivateKey"), "got: {err}");
 
@@ -127,10 +150,10 @@ fn gen_writes_one_conf_per_node_minus_self() {
     s.ok(&["mesh", "gen", "-m", "mesh.toml", "-o", "out"]);
 
     let a = std::fs::read_to_string(s.path("out/A.conf")).unwrap();
-    assert!(a.contains("PrivateKey = wFW7oUjIpLCfZW2UwsfTlLDGrZb9iJH3bK6nosB5IGI="));
+    assert!(a.contains("PrivateKey = dwdtCnMYpX08FsFyUbJmRd9ML4frwJkqsXf7pR25LCo="));
     // A peers with B and C, never itself
     assert!(a.contains("# B") && a.contains("# C"));
-    assert!(!a.contains("obuvsSP3vVFDjzrcwCWqgLmZeqEEVBGHIqzX3v4hYHA="));
+    assert!(!a.contains("hSDwCYkwp1R0i33ctD73Wg2/Og0mOBr066SpjqqbTmo="));
     assert!(a.contains("AllowedIPs = 10.10.0.2/32"));
 
     // B has no private key in the manifest -> placeholder, not a crash
@@ -171,7 +194,6 @@ fn list_shows_all_confs_with_state() {
     let s = Sandbox::new();
     std::fs::write(s.path("wg0.conf"), "[Interface]\n").unwrap();
     std::fs::write(s.path("mesh.conf"), "[Interface]\n").unwrap();
-    // readable dir -> no sudo; wg unavailable -> everything shows down
     let out = s.ok(&["list", "--dir", s.dir.path().to_str().unwrap()]);
     assert!(out.contains("wg0"), "got: {out}");
     assert!(out.contains("mesh"), "got: {out}");
@@ -182,12 +204,16 @@ fn list_shows_all_confs_with_state() {
 fn status_shows_only_up_interfaces() {
     let s = Sandbox::new();
     std::fs::write(s.path("wg0.conf"), "[Interface]\n").unwrap();
-    // wg unavailable in tests -> nothing is up
+    std::fs::write(s.path("wg1.conf"), "[Interface]\n").unwrap();
+    s.set_up(&["wg0"]);
     let out = s.ok(&["status", "--dir", s.dir.path().to_str().unwrap()]);
-    assert!(out.contains("nothing up"), "got: {out}");
     assert!(
-        !out.contains("wg0"),
-        "down interfaces must not appear in status"
+        out.contains("wg0"),
+        "an up interface must appear in status, got: {out}"
+    );
+    assert!(
+        !out.contains("wg1"),
+        "down interfaces must not appear in status, got: {out}"
     );
 }
 
@@ -195,10 +221,10 @@ fn status_shows_only_up_interfaces() {
 fn dir_can_come_from_the_env() {
     let s = Sandbox::new();
     std::fs::write(s.path("wg7.conf"), "[Interface]\n").unwrap();
-    let out = Command::new(env!("CARGO_BIN_EXE_ewg"))
+    let out = s
+        .command()
         .args(["list"])
         .env("EWG_DIR", s.dir.path())
-        .env("EWG_REGISTRY", s.path("registry.toml"))
         .output()
         .unwrap();
     assert!(out.status.success());

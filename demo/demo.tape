@@ -104,7 +104,7 @@ Enter
 Sleep 600ms
 Enter
 Sleep 400ms
-Type "10.10.1.1"
+Type "10.99.0.1"
 Sleep 800ms
 Enter
 Sleep 800ms

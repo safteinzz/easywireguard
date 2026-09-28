@@ -116,18 +116,12 @@ mod tests {
 
     #[test]
     fn qr_config_unknown_target_errors() {
-        let err = qr_config("ghost", Path::new("nope.toml"))
-            .unwrap_err()
-            .to_string();
+        let err = qr_config(
+            "ghost",
+            &tempfile::tempdir().unwrap().path().join("nope.toml"),
+        )
+        .unwrap_err()
+        .to_string();
         assert!(err.contains("not a file"), "got: {err}");
-    }
-
-    #[test]
-    fn a_typical_wg_config_fits_in_a_qr() {
-        let cfg = "[Interface]\nPrivateKey = MN9c1GcVMpNJ7kV1ZeC6ccml6q9Swz0plla2axvHa0E=\n\
-                   Address = 10.10.1.2/24\nDNS = 192.168.10.250\n\n[Peer]\n\
-                   PublicKey = FcNyhptCK62097pnVF2P092kob9+8vJtsFMc7Ws4ojc=\n\
-                   Endpoint = vpn-villena.safteinzz.com:51820\nAllowedIPs = 0.0.0.0/0\n";
-        assert!(qrcode::QrCode::new(cfg.as_bytes()).is_ok());
     }
 }
