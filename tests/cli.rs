@@ -284,6 +284,8 @@ fn mesh_add_list_rm_gen_and_json() {
         "10.10.0.2/24",
         "--pubkey",
         "PUBB",
+        "--private",
+        "PRIV_B",
         "-m",
         "mesh.toml",
     ]);
@@ -305,8 +307,14 @@ fn mesh_add_list_rm_gen_and_json() {
     // json never leaks private keys and is valid
     let json = s.ok(&["mesh", "list", "-m", "mesh.toml", "--json"]);
     assert!(
-        !json.contains("private"),
-        "list json must not include private keys"
+        std::fs::read_to_string(s.path("mesh.toml"))
+            .unwrap()
+            .contains("PRIV_B"),
+        "houseB's private key should be in the manifest for this check to mean anything"
+    );
+    assert!(
+        !json.contains("PRIV_B"),
+        "list json must not include private keys, got: {json}"
     );
     let v: serde_json::Value = serde_json::from_str(&json).unwrap();
     assert_eq!(v.as_array().unwrap().len(), 2);
