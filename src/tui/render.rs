@@ -1,6 +1,5 @@
 //! Drawing the frame: the tab bar, the list body and the status line.
 
-use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Tabs};
 
 use super::overlay::{render_overlay, render_prompt};

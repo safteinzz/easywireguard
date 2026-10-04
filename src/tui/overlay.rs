@@ -1,6 +1,5 @@
 //! Centered overlays: the wizard, a QR, an inspect pane and the confirms.
 
-use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 use std::path::PathBuf;
 

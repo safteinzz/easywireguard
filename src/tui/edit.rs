@@ -2,7 +2,6 @@
 //! kept whenever an existing file is replaced.
 
 use anyhow::Result;
-use ratatui::prelude::*;
 use std::path::{Path, PathBuf};
 
 use super::*;
