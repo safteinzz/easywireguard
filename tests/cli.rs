@@ -218,6 +218,58 @@ fn status_shows_only_up_interfaces() {
 }
 
 #[test]
+fn status_json_never_asks_for_sudo_and_prints_an_array() {
+    let s = Sandbox::new();
+    let called = s.path("sudo-was-called");
+    let stub = s.write(
+        "bin/sudo",
+        &format!("#!/bin/sh\n: > {}\nexit 1\n", called.display()),
+    );
+    std::fs::set_permissions(stub, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let locked = s.path("locked");
+    std::fs::create_dir(&locked).unwrap();
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+    let run = |args: &[&str]| {
+        s.command()
+            .env_remove("EWG_NO_SUDO")
+            .args(args)
+            .args(["--dir", locked.to_str().unwrap()])
+            .output()
+            .unwrap()
+    };
+    let plain = run(&["status"]);
+    let plain_called = called.exists();
+    let _ = std::fs::remove_file(&called);
+    let json = run(&["status", "--json"]);
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    assert!(
+        plain_called,
+        "plain `status` must reach for sudo on an unreadable dir, or this test proves nothing\nstderr: {}",
+        String::from_utf8_lossy(&plain.stderr)
+    );
+    assert!(!called.exists(), "`status --json` must never run sudo");
+    assert!(
+        json.status.success(),
+        "`status --json` must exit 0 when the check ran\nstderr: {}",
+        String::from_utf8_lossy(&json.stderr)
+    );
+    let parsed: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap_or_else(|e| {
+        panic!(
+            "stdout must be only JSON ({e}), got: {}",
+            String::from_utf8_lossy(&json.stdout)
+        )
+    });
+    let up = parsed.as_array().expect("stdout must be a JSON array");
+    for iface in up {
+        for field in ["name", "interface", "config"] {
+            assert!(iface.get(field).is_some(), "`{field}` missing in {iface}");
+        }
+    }
+}
+
+#[test]
 fn dir_can_come_from_the_env() {
     let s = Sandbox::new();
     std::fs::write(s.path("wg7.conf"), "[Interface]\n").unwrap();

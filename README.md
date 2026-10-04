@@ -69,7 +69,7 @@ The TUI wraps these; call them directly to automate.
 
 ```bash
 ewg list                 # every interface across your dirs, up or down
-ewg status               # only the ones up, with their live wireguard status
+ewg status               # only the ones up; --json for a status bar, no root
 ewg up <name>            # bring one up
 ewg down <name>          # and take it down
 ewg dir add <path>       # register where .conf files live, not just /etc/wireguard

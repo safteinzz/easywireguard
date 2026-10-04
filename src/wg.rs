@@ -92,6 +92,39 @@ pub fn find(dirs: &[PathBuf], name: &str) -> Result<PathBuf> {
     bail!("no `{name}.conf` in any registered dir - add its dir: ewg dir add <path>");
 }
 
+/// WireGuard interfaces the kernel has, from `/sys/class/net/*/uevent`, which
+/// any user can read, so this needs neither root nor the `wg` binary. A `wg-quick`
+/// interface exists only while it is up, so this is the set that is up.
+pub fn kernel_interfaces() -> Result<BTreeSet<String>> {
+    let Ok(entries) = std::fs::read_dir("/sys/class/net") else {
+        bail!("cannot read `/sys/class/net`, which the kernel check needs (linux only)");
+    };
+    Ok(entries
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            // An interface removed mid-scan loses its `uevent`, and is not up.
+            std::fs::read_to_string(e.path().join("uevent"))
+                .is_ok_and(|u| u.lines().any(|l| l == "DEVTYPE=wireguard"))
+        })
+        .filter_map(|e| e.file_name().into_string().ok())
+        .collect())
+}
+
+/// The `.conf` behind `name` as [`find`] would pick it, but only when this
+/// process can read it: `None` when it is missing or when a dir in front of it
+/// cannot be read, since that dir might hold the one that wins.
+pub fn readable_config(dirs: &[PathBuf], name: &str) -> Option<PathBuf> {
+    for dir in dirs {
+        let candidate = dir.join(format!("{name}.conf"));
+        match std::fs::File::open(&candidate) {
+            Ok(_) => return Some(candidate),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(_) => return None,
+        }
+    }
+    None
+}
+
 /// Interface names currently up, from `wg show interfaces`.
 pub fn active_interfaces() -> Result<BTreeSet<String>> {
     let out = Command::new("wg")

@@ -28,14 +28,18 @@ const TEMPLATE: &str =
 
 /// The one shape clap cannot list, because the TUI is the bare invocation.
 const WAYS: &str = "\x1b[1mWays to run it (not subcommands):\x1b[0m
-  ewg    the interface manager TUI, across every registered dir";
+  ewg    the interface manager TUI, across every registered dir; creating, editing,
+         deleting and start-on-boot for a config live only there";
 
 /// The rest of the block: what a script can expect, then where to look next.
 const AFTER: &str = concat!(
     "\
-Output is written for people, and `dir` and `mesh` take `--json` when something
-has to read it; `check` is the machine-facing one and exits non-zero when a
-config is broken. Failures name themselves on stderr and exit non-zero.
+Output is written for people, and `dir`, `mesh` and `status` take `--json` when
+something has to read it, with fixed field names; `check` is the machine-facing
+one and exits non-zero when a config is broken. Failures name themselves on
+stderr and exit non-zero. `list`, `status`, `up`, `down` and the TUI re-run under
+`sudo` when a dir needs root, which can prompt; `EWG_NO_SUDO=1` stops that, and
+`status --json` never needs it.
 Run `ewg <command> --help` for a command's details.",
     "\n\n",
     env!("CARGO_PKG_REPOSITORY"),
@@ -90,8 +94,14 @@ enum Cmd {
     #[command(visible_alias = "ls")]
     List,
 
-    /// Show only the interfaces currently up (real wireguard status)
-    Status,
+    /// Show only the interfaces currently up, by name
+    ///   --json                      a JSON array, from the kernel, no root needed
+    #[command(verbatim_doc_comment)]
+    Status {
+        /// One object per interface up, `[]` for none: `name`, `interface`, `config` (null if unreadable without root)
+        #[arg(long)]
+        json: bool,
+    },
 
     /// Bring an interface up  <NAME>
     #[command(verbatim_doc_comment)]
@@ -137,7 +147,7 @@ enum Cmd {
         private: String,
     },
 
-    /// Render a wg config as a scannable QR - a .conf file or a manifest node  <TARGET>
+    /// Render a wg config as a scannable QR, from a .conf file or a manifest node  <TARGET>
     ///   ewg qr <path.conf>          QR for that file (scan into the wg app)
     ///   ewg qr <node> -m mesh.toml  QR for that node's generated config
     #[command(verbatim_doc_comment)]
@@ -185,7 +195,10 @@ fn main() -> Result<()> {
             elevate::elevate_for(&dirs)?;
             commands::list::run(&dirs)
         }
-        Some(Cmd::Status) => {
+        Some(Cmd::Status { json: true }) => {
+            commands::status::run_json(&registry::resolve_dirs(cli.dir)?)
+        }
+        Some(Cmd::Status { json: false }) => {
             let dirs = registry::resolve_dirs(cli.dir)?;
             elevate::elevate_for(&dirs)?;
             commands::status::run(&dirs)

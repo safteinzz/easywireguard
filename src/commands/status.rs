@@ -1,6 +1,7 @@
 //! `ewg status`: only the interfaces wireguard reports as up.
 
 use anyhow::Result;
+use serde::Serialize;
 use std::path::PathBuf;
 
 use crate::wg;
@@ -15,5 +16,29 @@ pub fn run(dirs: &[PathBuf]) -> Result<()> {
     for i in up {
         println!("{}", i.name);
     }
+    Ok(())
+}
+
+/// One up interface as `status --json` prints it; the field names are fixed.
+#[derive(Serialize)]
+struct Up {
+    name: String,
+    interface: String,
+    config: Option<PathBuf>,
+}
+
+/// The interfaces up as a JSON array, from the kernel rather than `wg`, so it
+/// never needs root: callers must not elevate before it.
+pub fn run_json(dirs: &[PathBuf]) -> Result<()> {
+    let up: Vec<Up> = wg::kernel_interfaces()?
+        .into_iter()
+        .map(|interface| Up {
+            // `wg-quick` names the interface after its `.conf`, so the two agree.
+            name: interface.clone(),
+            config: wg::readable_config(dirs, &interface),
+            interface,
+        })
+        .collect();
+    println!("{}", serde_json::to_string_pretty(&up)?);
     Ok(())
 }
