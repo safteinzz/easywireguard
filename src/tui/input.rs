@@ -1,4 +1,5 @@
-//! Key dispatch: the tab-wide keys, then whichever view owns the rest.
+//! Key dispatch: help and the boxes first, then the form, the `/` filter, the
+//! app-wide keys, and whichever tab owns the rest.
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::path::PathBuf;
@@ -9,115 +10,261 @@ use super::overlay::ConfirmAction;
 use super::overlay::ExportKind;
 use super::*;
 
+/// Ctrl-C, which does what Esc does under a box or in a form and quits from a view.
+pub(super) fn is_ctrl_c(key: KeyEvent) -> bool {
+    key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c')
+}
+
 impl App {
     pub(super) fn on_key(&mut self, key: KeyEvent) {
+        if self.show_help {
+            let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+            let half = 10;
+            match key.code {
+                _ if is_ctrl_c(key) => self.show_help = false,
+                KeyCode::Char('?' | 'q') | KeyCode::Esc => self.show_help = false,
+                KeyCode::Char('d') if ctrl => {
+                    self.help_scroll = self.help_scroll.saturating_add(half)
+                }
+                KeyCode::Char('u') if ctrl => {
+                    self.help_scroll = self.help_scroll.saturating_sub(half)
+                }
+                KeyCode::PageDown => self.help_scroll = self.help_scroll.saturating_add(half),
+                KeyCode::PageUp => self.help_scroll = self.help_scroll.saturating_sub(half),
+                KeyCode::Char('j') | KeyCode::Down => {
+                    self.help_scroll = self.help_scroll.saturating_add(1)
+                }
+                KeyCode::Char('k') | KeyCode::Up => {
+                    self.help_scroll = self.help_scroll.saturating_sub(1)
+                }
+                KeyCode::Char('g') | KeyCode::Home => self.help_scroll = 0,
+                // `render_help` clamps this to the last screenful.
+                KeyCode::Char('G') | KeyCode::End => self.help_scroll = usize::MAX,
+                _ => {}
+            }
+            return;
+        }
         if self.overlay.is_some() {
-            // Text pager: j/k scroll, else close. QR: any key closes. Confirm: y deletes.
-            let mut close = false;
-            let mut confirm: Option<ConfirmAction> = None;
-            let mut do_export: Option<(String, ExportKind)> = None;
-            let mut yank: Option<String> = None;
-            let mut reopen: Option<(String, Option<PathBuf>, bool)> = None;
-            let mut discarded = false;
-            match self.overlay.as_mut().unwrap() {
-                Overlay::Text { scroll, body, .. } => match key.code {
-                    KeyCode::Down | KeyCode::Char('j') => *scroll = scroll.saturating_add(1),
-                    KeyCode::Up | KeyCode::Char('k') => *scroll = scroll.saturating_sub(1),
-                    KeyCode::Char('y') => yank = Some(body.clone()),
-                    _ => close = true,
-                },
-                Overlay::Qr { .. } => close = true,
-                Overlay::Confirm { action, yes, .. } => match key.code {
-                    KeyCode::Char('y' | 'Y') => {
-                        confirm = Some(action.clone());
-                        close = true;
-                    }
-                    KeyCode::Char('n' | 'N') | KeyCode::Esc | KeyCode::Char('q') => close = true,
-                    KeyCode::Left | KeyCode::Right | KeyCode::Char('h' | 'l') | KeyCode::Tab => {
-                        *yes = !*yes
-                    }
-                    KeyCode::Enter => {
-                        if *yes {
-                            confirm = Some(action.clone());
-                        }
-                        close = true;
-                    }
-                    // Anything else is swallowed: a stray keypress must not be
-                    // able to answer a gate, in either direction.
-                    _ => {}
-                },
-                Overlay::Menu {
-                    name, items, idx, ..
-                } => match key.code {
-                    KeyCode::Down | KeyCode::Char('j') => *idx = (*idx + 1) % items.len(),
-                    KeyCode::Up | KeyCode::Char('k') => {
-                        *idx = (*idx + items.len() - 1) % items.len()
-                    }
-                    KeyCode::Enter => {
-                        do_export = Some((name.clone(), items[*idx].1));
-                        close = true;
-                    }
-                    KeyCode::Esc | KeyCode::Char('q') => close = true,
-                    _ => {}
-                },
-                Overlay::Invalid {
-                    content,
-                    original,
-                    was_up,
-                    ..
-                } => {
-                    match key.code {
-                        KeyCode::Char('e') | KeyCode::Char('c') | KeyCode::Enter => {
-                            reopen = Some((content.clone(), original.clone(), *was_up))
-                        }
-                        _ => discarded = true, // d / esc / any other key throws it away
-                    }
-                    close = true;
-                }
-            }
-            if discarded {
-                self.set_status("discarded");
-            }
-            if let Some((content, original, was_up)) = reopen {
-                self.overlay = None;
-                self.reopen_editor(content, original, was_up);
-                return;
-            }
-            if let Some(text) = yank {
-                // keep the box open so "copied" shows while it's still on screen
-                match copy_clipboard(&text) {
-                    Some(tool) => self.set_status(format!("copied to clipboard ({tool})")),
-                    None => self.set_failed("no clipboard tool - install wl-clipboard or xclip"),
-                }
-            } else if let Some(action) = confirm {
-                self.overlay = None;
-                match action {
-                    ConfirmAction::DeleteNode(name) => self.delete_node(&name),
-                    ConfirmAction::DeleteIface(path) => self.delete_iface(path),
-                }
-            } else if let Some((name, kind)) = do_export {
-                self.overlay = None;
-                self.export(&name, kind);
-            } else if close {
-                self.overlay = None;
-            }
+            // Under a box Ctrl-C is Esc, so a reflex Ctrl-C steps out one box.
+            let key = if is_ctrl_c(key) {
+                KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)
+            } else {
+                key
+            };
+            self.overlay_key(key);
             return;
         }
         if self.prompt.is_some() {
             self.prompt_key(key);
             return;
         }
+        if self.searching {
+            self.search_key(key);
+            return;
+        }
+        self.nav_key(key);
+    }
+
+    /// Keys while a box is up. A key that means nothing to the box is
+    /// swallowed, so a stray press can neither dismiss nor answer it.
+    fn overlay_key(&mut self, key: KeyEvent) {
+        let mut close = false;
+        let mut confirm: Option<ConfirmAction> = None;
+        let mut do_export: Option<(String, ExportKind)> = None;
+        let mut yank: Option<String> = None;
+        let mut reopen: Option<(String, Option<PathBuf>, bool)> = None;
+        let mut discarded = false;
+        let mut cancelled = false;
+        match self.overlay.as_mut().unwrap() {
+            Overlay::Text { scroll, body, .. } => match key.code {
+                KeyCode::Down | KeyCode::Char('j') => *scroll = scroll.saturating_add(1),
+                KeyCode::Up | KeyCode::Char('k') => *scroll = scroll.saturating_sub(1),
+                KeyCode::Char('y') => yank = Some(body.clone()),
+                KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q' | ' ') => close = true,
+                _ => {}
+            },
+            Overlay::Qr { .. } => {
+                close = matches!(
+                    key.code,
+                    KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q' | ' ')
+                )
+            }
+            Overlay::Confirm { action, yes, .. } => match key.code {
+                KeyCode::Char('y' | 'Y') => {
+                    confirm = Some(action.clone());
+                    close = true;
+                }
+                KeyCode::Char('n' | 'N') | KeyCode::Esc => {
+                    cancelled = true;
+                    close = true;
+                }
+                KeyCode::Left
+                | KeyCode::Right
+                | KeyCode::Char('h' | 'l')
+                | KeyCode::Tab
+                | KeyCode::BackTab => *yes = !*yes,
+                KeyCode::Enter => {
+                    if *yes {
+                        confirm = Some(action.clone());
+                    } else {
+                        cancelled = true;
+                    }
+                    close = true;
+                }
+                _ => {}
+            },
+            Overlay::Typed {
+                name,
+                input,
+                back,
+                action,
+                ..
+            } => match key.code {
+                KeyCode::Esc => {
+                    cancelled = true;
+                    close = true;
+                }
+                KeyCode::Enter if input == name => {
+                    confirm = Some(action.clone());
+                    close = true;
+                }
+                KeyCode::Enter => {}
+                _ => {
+                    line_edit::edit(input, back, key);
+                }
+            },
+            Overlay::Menu {
+                name, items, idx, ..
+            } => match key.code {
+                KeyCode::Down | KeyCode::Char('j') => *idx = (*idx + 1) % items.len(),
+                KeyCode::Up | KeyCode::Char('k') => *idx = (*idx + items.len() - 1) % items.len(),
+                KeyCode::Enter => {
+                    do_export = Some((name.clone(), items[*idx].1));
+                    close = true;
+                }
+                KeyCode::Esc => {
+                    cancelled = true;
+                    close = true;
+                }
+                _ => {}
+            },
+            Overlay::Invalid {
+                content,
+                original,
+                was_up,
+                yes,
+                ..
+            } => {
+                let correct = match key.code {
+                    KeyCode::Char('y' | 'Y') => Some(true),
+                    KeyCode::Char('n' | 'N') | KeyCode::Esc => Some(false),
+                    KeyCode::Enter => Some(*yes),
+                    KeyCode::Left
+                    | KeyCode::Right
+                    | KeyCode::Char('h' | 'l')
+                    | KeyCode::Tab
+                    | KeyCode::BackTab => {
+                        *yes = !*yes;
+                        None
+                    }
+                    _ => None,
+                };
+                match correct {
+                    Some(true) => reopen = Some((content.clone(), original.clone(), *was_up)),
+                    Some(false) => discarded = true,
+                    None => {}
+                }
+                close = correct.is_some();
+            }
+        }
+        if discarded {
+            self.set_status("discarded");
+        }
+        if cancelled {
+            self.set_status("cancelled");
+        }
+        if let Some((content, original, was_up)) = reopen {
+            self.overlay = None;
+            self.reopen_editor(content, original, was_up);
+            return;
+        }
+        if let Some(text) = yank {
+            // keep the box open so "copied" shows while it's still on screen
+            match copy_clipboard(&text) {
+                Some(tool) => self.set_status(format!("copied to clipboard ({tool})")),
+                None => self.set_failed("no clipboard tool: install wl-clipboard or xclip"),
+            }
+        } else if let Some(action) = confirm {
+            self.overlay = None;
+            match action {
+                ConfirmAction::DeleteNode(name) => self.delete_node(&name),
+                ConfirmAction::DeleteIface(path) => self.delete_iface(path),
+            }
+        } else if let Some((name, kind)) = do_export {
+            self.overlay = None;
+            self.export(&name, kind);
+        } else if close {
+            self.overlay = None;
+        }
+    }
+
+    /// Typing a `/` filter. Everything printable goes into the query, and the
+    /// list keeps updating under it while the arrows still move, so you can
+    /// type, then act on what is left.
+    fn search_key(&mut self, key: KeyEvent) {
+        // Esc drops the filter, and Ctrl-C with it, so a reflex Ctrl-C steps
+        // out of the query before it can quit; Enter keeps it.
+        if key.code == KeyCode::Esc || is_ctrl_c(key) {
+            self.query.clear();
+            self.query_back = 0;
+            self.searching = false;
+            self.requery();
+            return;
+        }
+        match key.code {
+            KeyCode::Enter => self.searching = false,
+            KeyCode::Down => self.move_sel(1),
+            KeyCode::Up => self.move_sel(-1),
+            _ => {
+                if line_edit::edit(&mut self.query, &mut self.query_back, key) {
+                    self.requery();
+                }
+            }
+        }
+    }
+
+    /// Keys on a tab: the app-wide ones, then whichever tab owns the rest.
+    fn nav_key(&mut self, key: KeyEvent) {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-        if ctrl && key.code == KeyCode::Char('c') {
+        if is_ctrl_c(key) {
             self.should_quit = true;
             return;
         }
         match key.code {
-            KeyCode::Char('q') | KeyCode::Esc => self.should_quit = true,
+            KeyCode::Char('q') if !ctrl => self.should_quit = true,
+            KeyCode::Char('?') if !ctrl => {
+                self.show_help = true;
+                self.help_scroll = 0;
+            }
+            KeyCode::Char('/') if !ctrl => {
+                self.query.clear();
+                self.query_back = 0;
+                self.searching = true;
+                self.requery();
+            }
+            // Outside a search, Esc's only job is to undo one.
+            KeyCode::Esc if !self.query.is_empty() => {
+                self.query.clear();
+                self.query_back = 0;
+                self.requery();
+                self.set_status("filter cleared");
+            }
             KeyCode::Tab | KeyCode::Right | KeyCode::Char('l') => self.cycle_view(1),
             KeyCode::BackTab | KeyCode::Left | KeyCode::Char('h') => self.cycle_view(-1),
             KeyCode::Down | KeyCode::Char('j') => self.move_sel(1),
             KeyCode::Up | KeyCode::Char('k') => self.move_sel(-1),
+            // A leftover Ctrl-chord is never an action, so Ctrl-d cannot delete.
+            _ if ctrl => {}
             _ => match self.view {
                 View::Interfaces => self.interfaces_key(key),
                 View::Mesh => self.mesh_key(key),
@@ -190,10 +337,17 @@ impl App {
                     self.set_failed("no node selected");
                     return;
                 };
-                self.overlay = Some(Overlay::Confirm {
-                    prompt: format!("delete `{name}` from mesh.toml?"),
+                // mesh.toml keeps no backup, and a stored private key is in
+                // no other file, so the delete takes the node's typed name.
+                self.overlay = Some(Overlay::Typed {
+                    title: "delete node".into(),
+                    message: format!(
+                        "delete `{name}` from mesh.toml? No backup is kept, and a private key stored there exists nowhere else."
+                    ),
+                    name: name.clone(),
+                    input: String::new(),
+                    back: 0,
                     action: ConfirmAction::DeleteNode(name),
-                    yes: false,
                 });
             }
             KeyCode::Enter => {
@@ -210,7 +364,7 @@ impl App {
                 Ok(n) => self.set_status(format!("wrote {n} configs to ./out")),
                 Err(e) => self.set_failed(format!("gen failed: {e}")),
             },
-            KeyCode::Char('r') => self.reload("reloaded manifest"),
+            KeyCode::Char('r') => self.reload("refreshed"),
             _ => {}
         }
     }
@@ -268,11 +422,7 @@ impl App {
             return;
         }
         match key.code {
-            KeyCode::Esc => {
-                self.prompt = None;
-                self.set_status("cancelled");
-            }
-            KeyCode::Char('c') if ctrl => {
+            _ if key.code == KeyCode::Esc || is_ctrl_c(key) => {
                 self.prompt = None;
                 self.set_status("cancelled");
             }
@@ -284,11 +434,9 @@ impl App {
                     self.submit_prompt();
                 }
             }
-            KeyCode::Backspace => {
-                self.prompt.as_mut().unwrap().cur_mut().value.pop();
-            }
-            KeyCode::Char(c) if !ctrl => {
-                self.prompt.as_mut().unwrap().cur_mut().value.push(c);
+            _ if !on_choice => {
+                let field = self.prompt.as_mut().unwrap().cur_mut();
+                line_edit::edit(&mut field.value, &mut field.back, key);
             }
             _ => {}
         }

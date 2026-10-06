@@ -91,10 +91,15 @@ included.
 | key | does |
 | --- | --- |
 | `j` `k` / `↑` `↓` | move in the list |
-| `h` `l` / `←` `→` / `Tab` | switch tab |
-| `q` / `Esc` / `Ctrl-C` | quit |
+| `h` `l` / `←` `→` / `tab` `shift-tab` | switch tab |
+| `/` | filter the list; `↵` keeps it, `esc` drops it |
+| `c` / `e` / `d` | create, edit, delete; deleting a node asks you to type its name |
+| `r` | read the tab's data again |
+| `esc` | cancel a form or a question, close help or a box you read |
+| `?` | every key, on every tab |
+| `q` / `ctrl-c` | quit; in a form or a box, `ctrl-c` is `esc` |
 
-Each tab's own keys are on its bottom line.
+Each tab's own keys are on its bottom line, and `?` lists them all.
 
 ## Notes
 

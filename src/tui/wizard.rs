@@ -244,6 +244,6 @@ impl App {
             self.set_status(format!("added {} `{name}`", kind.short()));
         }
         self.nodes = m.nodes; // move (Node isn't Clone); m is done being borrowed
-        Self::clamp(&mut self.node_state, self.nodes.len());
+        self.clamp_all();
     }
 }

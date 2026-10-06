@@ -72,6 +72,8 @@ pub(super) struct Field {
     /// the values all start in the same column.
     pub(super) hint: String,
     pub(super) value: String,
+    /// The cursor in `value`, as characters after it (`line_edit::edit`).
+    pub(super) back: usize,
     pub(super) kind: FieldKind,
     /// Marked with a red `*`, the form convention everyone already reads. Only
     /// set it on a field the submit path actually refuses to go without, or the
@@ -86,6 +88,7 @@ impl Field {
             default: default.into(),
             hint: String::new(),
             value: String::new(),
+            back: 0,
             kind: FieldKind::Text,
             required: false,
         }
@@ -121,6 +124,7 @@ impl Field {
             default: String::new(),
             hint: String::new(),
             value: String::new(),
+            back: 0,
             kind: FieldKind::Type(kind),
             required: false,
         }
@@ -131,6 +135,7 @@ impl Field {
             default: String::new(),
             hint: String::new(),
             value: String::new(),
+            back: 0,
             kind: FieldKind::Key(src),
             required: false,
         }
@@ -141,6 +146,7 @@ impl Field {
             default: String::new(),
             hint: String::new(),
             value: String::new(),
+            back: 0,
             kind: FieldKind::Pick { options, idx: 0 },
             required: false,
         }
@@ -384,6 +390,7 @@ impl Prompt {
         for nf in next.iter_mut() {
             if let Some(of) = old.iter().find(|f| f.label == nf.label) {
                 nf.value = of.value.clone();
+                nf.back = of.back;
                 if let (
                     FieldKind::Pick { options, idx },
                     FieldKind::Pick {

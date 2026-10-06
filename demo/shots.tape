@@ -2,7 +2,7 @@
 # No terminal to size, no cropping: the frame below is the frame of every shot,
 # and a rerun after a UI change replaces them all identically.
 #
-#   cd demo && vhs shots.tape
+#   ./render.sh shots
 #
 # 125 columns by 15 rows: wide enough that the Mesh tab's hint line does not
 # wrap (it is the longest thing the toolbox draws), short enough that the list

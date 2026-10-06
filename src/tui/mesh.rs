@@ -28,7 +28,7 @@ impl App {
                     return;
                 }
                 self.nodes = m.nodes;
-                Self::clamp(&mut self.node_state, self.nodes.len());
+                self.clamp_all();
                 self.set_status(format!("deleted `{name}`"));
             }
             Err(e) => self.set_failed(format!("delete failed: {e}")),

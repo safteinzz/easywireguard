@@ -2,7 +2,7 @@
 # off a screen: VHS replays these keystrokes in a headless terminal and draws
 # the GIF itself, so it re-renders identically every release.
 #
-#   cd demo && vhs demo.tape
+#   ./render.sh demo
 #
 # One beat per thing the tool does, each finished before the next starts: look
 # at an interface, toggle it, put a node in the mesh, hand it out, take it away
@@ -136,9 +136,12 @@ Sleep 800ms
 # ===========================================================================
 # SCENE 6 - and gone again
 # ===========================================================================
+# mesh.toml keeps no backup, so the delete asks for the node's name.
 Type "d"
-Sleep 1.5s
-Type "y"
+Sleep 1.2s
+Type "guest-phone"
+Sleep 800ms
+Enter
 Sleep 1.8s
 
 # ===========================================================================

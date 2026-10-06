@@ -2,7 +2,7 @@
 # and the inspector. Same rig, same fixtures, a frame sized for what is being
 # drawn rather than for the list behind it.
 #
-#   cd demo && vhs overlays.tape
+#   ./render.sh overlays
 #
 # A QR of a real config is 69 modules across, so even at two modules per row it
 # needs about 71x37 - below that the toolbox refuses to draw a clipped, un-

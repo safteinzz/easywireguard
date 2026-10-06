@@ -11,12 +11,17 @@ use super::*;
 impl App {
     /// The interface selected in the list, if any.
     pub(super) fn selected_iface(&self) -> Option<&Iface> {
-        self.iface_state.selected().and_then(|i| self.ifaces.get(i))
+        let rows = self.iface_rows();
+        self.iface_state
+            .selected()
+            .and_then(|i| rows.get(i))
+            .and_then(|&i| self.ifaces.get(i))
     }
 
     /// Re-select the interface named `name` after a reload (best effort).
     pub(super) fn select_iface(&mut self, name: &str) {
-        if let Some(i) = self.ifaces.iter().position(|f| f.name == name) {
+        let rows = self.iface_rows();
+        if let Some(i) = rows.iter().position(|&r| self.ifaces[r].name == name) {
             self.iface_state.select(Some(i));
         }
     }
@@ -77,7 +82,7 @@ impl App {
 
     /// Called by the event loop once `$EDITOR` has exited. Saving nothing (buffer
     /// unchanged from the seed, or emptied) cancels. Otherwise the config is
-    /// validated: a valid one goes to the name prompt; an invalid one pops a dialog
+    /// validated: a valid one goes to the name prompt; an invalid one pops an offer
     /// naming the problem, so the user decides whether to fix it or throw it away.
     pub(super) fn editor_done(&mut self, req: EditorReq) {
         let content = std::fs::read_to_string(&req.tmp).unwrap_or_default();
@@ -98,12 +103,13 @@ impl App {
                     content,
                     original: req.original,
                     was_up: req.was_up,
+                    yes: true,
                 })
             }
         }
     }
 
-    /// Reopen `$EDITOR` on `content` (the "correct" choice from the invalid dialog).
+    /// Reopen `$EDITOR` on `content` (the Yes of the invalid-config offer).
     pub(super) fn reopen_editor(
         &mut self,
         content: String,
@@ -146,9 +152,9 @@ impl App {
             fields.push(Field::pick("Directory", opts));
         }
         let title = if original.is_some() {
-            "Save interface".to_string()
+            "save interface".to_string()
         } else {
-            "Name the interface".to_string()
+            "name the interface".to_string()
         };
         self.prompt = Some(Prompt {
             title,
@@ -179,6 +185,7 @@ impl App {
         let name = iface.name.clone();
         let path = iface.path.clone();
         self.overlay = Some(Overlay::Confirm {
+            title: "delete interface".into(),
             prompt: format!("delete `{name}.conf`? a .bak is kept."),
             action: ConfirmAction::DeleteIface(path),
             yes: false,

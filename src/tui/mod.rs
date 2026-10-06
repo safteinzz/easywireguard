@@ -1,14 +1,15 @@
-//! The toolbox - bare `ewg`. Two tabs (Interfaces / Mesh), switched with
-//! `h/l ←→` or Tab, navigated with `j/k ↑↓` like a normal list:
+//! The toolbox, bare `ewg`. Two tabs (Interfaces and Mesh), switched with
+//! `h/l ←→` or Tab, navigated with `j/k ↑↓` like a normal list, `/` filtering
+//! either list and `?` listing every key:
 //!
-//! - **Interfaces** - the `.conf` files across your registered dirs; `↵` toggles one
-//!   up/down, `c` creates one in `$EDITOR` (paste a provider config), `e` edits, `d`
-//!   deletes it (a `.bak` is kept), `b` toggles start-on-boot, `i` inspects it (with
-//!   live `wg show` when up).
-//! - **Mesh** - the nodes in a manifest, shown hub-and-spoke (spokes nested under
+//! - **Interfaces**: the `.conf` files across your registered dirs; `↵` turns one
+//!   on or off, `c` creates one in `$EDITOR` (paste a provider config), `e` edits,
+//!   `d` deletes it (a `.bak` is kept), `b` turns start-on-boot on or off, `i`
+//!   inspects it (with live `wg show` when up).
+//! - **Mesh**: the nodes in a manifest, shown hub-and-spoke (spokes nested under
 //!   their hub). `c` creates one (a Spoke/Hub wizard that generates keys and pops a
 //!   QR to scan), `↵` shows a node's QR, `i` inspects its generated config, `d`
-//!   deletes it.
+//!   deletes it once its name is typed.
 //!
 //! Modeled on `simplessh`'s tabbed layout: a bordered tab bar titled with the app
 //! name, `Name (count)` bodies, a status line that fades after `STATUS_TTL`, and
@@ -35,11 +36,12 @@ use std::time::{Duration, Instant};
 use crate::manifest::{Manifest, Node};
 use crate::wg::{self, Iface};
 
-/// How long a status message stays before the hints return.
 mod clipboard;
 mod edit;
+mod filter;
 mod input;
 mod interfaces;
+mod line_edit;
 mod mesh;
 mod overlay;
 mod prompt;
@@ -53,19 +55,29 @@ use overlay::Overlay;
 use prompt::{Field, FieldKind, KeySource, NodeKind, Prompt};
 use render::render;
 use widgets::{
-    box_block, box_buttons, box_height, box_hint, box_inner_width, box_width, centered, empty,
-    tilde, titled, wrapped_height,
+    CREATE, DEL, EDIT, FIND, INSPECT, QUIT, REFRESH, above_status, box_area, box_block,
+    box_buttons, box_height, box_hint, box_inner_width, box_width, empty, tilde, titled,
+    wrapped_line_count,
 };
 
+/// How long a status message stays before the keys return.
 const STATUS_TTL: Duration = Duration::from_secs(3);
 
-// Movement key labels. `Y` is vertical, `X` horizontal; `VIM_` is the letter
-// form and plain is the arrow form, and a list takes either. The wizard names
-// the arrows only, since bare letters are typed into its fields.
-const Y_MOVE: &str = "↑↓";
-const X_MOVE: &str = "←→";
-const VIM_Y_MOVE: &str = "j/k";
-const VIM_X_MOVE: &str = "h/l";
+// The footer under each tab: actions only, in the house order.
+const INTERFACES_KEYS: &[&str] = &[
+    "↵ on/off",
+    "b boot",
+    INSPECT,
+    CREATE,
+    EDIT,
+    DEL,
+    FIND,
+    REFRESH,
+    QUIT,
+];
+const MESH_KEYS: &[&str] = &[
+    "↵ QR", INSPECT, "R rotate", "E export", "g gen", CREATE, EDIT, DEL, FIND, REFRESH, QUIT,
+];
 
 /// The tabs, in left-to-right / Tab-cycle order.
 #[derive(Clone, Copy, PartialEq)]
@@ -83,14 +95,10 @@ impl View {
             View::Mesh => "Mesh",
         }
     }
-    pub(super) fn hints(self) -> String {
+    pub(super) fn keys(self) -> &'static [&'static str] {
         match self {
-            View::Interfaces => format!(
-                "{VIM_Y_MOVE} {Y_MOVE} move · {VIM_X_MOVE} {X_MOVE} tab · ↵ toggle · c new · e edit · d del · b boot · i inspect · r refresh · q quit"
-            ),
-            View::Mesh => format!(
-                "{VIM_Y_MOVE} {Y_MOVE} move · {VIM_X_MOVE} {X_MOVE} tab · c create · e edit · R rotate · d del · E export · ↵ QR · i view · g gen · r reload · q quit"
-            ),
+            View::Interfaces => INTERFACES_KEYS,
+            View::Mesh => MESH_KEYS,
         }
     }
 }
@@ -111,6 +119,16 @@ pub(super) struct App {
     manifest_path: PathBuf,
     nodes: Vec<Node>,
     node_state: ListState,
+
+    /// The `/` filter over the current tab's list, dropped when the tab changes.
+    query: String,
+    /// The cursor in `query`, as characters after it (`line_edit::edit`).
+    query_back: usize,
+    /// Whether `/` is still being typed, so letters go into `query`.
+    searching: bool,
+    show_help: bool,
+    /// The first help row on screen; `render_help` clamps it to the end.
+    help_scroll: usize,
 
     prompt: Option<Prompt>,
     overlay: Option<Overlay>,
@@ -142,6 +160,11 @@ impl App {
             manifest_path,
             nodes,
             node_state: ListState::default(),
+            query: String::new(),
+            query_back: 0,
+            searching: false,
+            show_help: false,
+            help_scroll: 0,
             prompt: None,
             overlay: None,
             pending_editor: None,
@@ -173,8 +196,10 @@ impl App {
     }
 
     pub(super) fn clamp_all(&mut self) {
-        Self::clamp(&mut self.iface_state, self.ifaces.len());
-        Self::clamp(&mut self.node_state, self.nodes.len());
+        let n = self.iface_rows().len();
+        Self::clamp(&mut self.iface_state, n);
+        let n = self.mesh_rows().len();
+        Self::clamp(&mut self.node_state, n);
     }
 
     pub(super) fn clamp(state: &mut ListState, len: usize) {
@@ -187,15 +212,52 @@ impl App {
 
     pub(super) fn active_list(&mut self) -> (&mut ListState, usize) {
         match self.view {
-            View::Interfaces => (&mut self.iface_state, self.ifaces.len()),
-            View::Mesh => (&mut self.node_state, self.nodes.len()),
+            View::Interfaces => {
+                let n = self.iface_rows().len();
+                (&mut self.iface_state, n)
+            }
+            View::Mesh => {
+                let n = self.mesh_rows().len();
+                (&mut self.node_state, n)
+            }
         }
+    }
+
+    /// The rows the current tab shows, after the filter.
+    pub(super) fn row_count(&self) -> usize {
+        match self.view {
+            View::Interfaces => self.iface_rows().len(),
+            View::Mesh => self.mesh_rows().len(),
+        }
+    }
+
+    /// The interfaces the filter keeps, as indices into `self.ifaces`. Every
+    /// selection goes through here, since the list state indexes these rows.
+    pub(super) fn iface_rows(&self) -> Vec<usize> {
+        (0..self.ifaces.len())
+            .filter(|&i| filter::matches(&self.query, &[&self.ifaces[i].name]))
+            .collect()
+    }
+
+    /// The query changed: start each list from its first match.
+    pub(super) fn requery(&mut self) {
+        self.iface_state.select(Some(0));
+        self.node_state.select(Some(0));
+        self.clamp_all();
     }
 
     pub(super) fn cycle_view(&mut self, delta: isize) {
         let cur = VIEWS.iter().position(|v| *v == self.view).unwrap_or(0) as isize;
         let n = VIEWS.len() as isize;
         self.view = VIEWS[(((cur + delta) % n + n) % n) as usize];
+        // A filter belongs to the list it was typed over; carried into the
+        // other tab it would hide rows nobody searched for.
+        if !self.query.is_empty() || self.searching {
+            self.query.clear();
+            self.query_back = 0;
+            self.searching = false;
+            self.requery();
+        }
     }
 
     pub(super) fn move_sel(&mut self, delta: isize) {
@@ -215,16 +277,18 @@ impl App {
             self.node_state.selected(),
         );
         let dirs = self.dirs.clone();
+        let (query, query_back) = (std::mem::take(&mut self.query), self.query_back);
         *self = App::load(&dirs);
         self.view = view;
+        self.query = query;
+        self.query_back = query_back;
         if let Some(i) = ifs {
-            self.iface_state
-                .select(Some(i.min(self.ifaces.len().saturating_sub(1))));
+            self.iface_state.select(Some(i));
         }
         if let Some(i) = nds {
-            self.node_state
-                .select(Some(i.min(self.nodes.len().saturating_sub(1))));
+            self.node_state.select(Some(i));
         }
+        self.clamp_all();
         self.set_status(msg);
     }
 
@@ -254,7 +318,8 @@ impl App {
 
     /// Display order for the Mesh list: each hub, then its spokes indented under
     /// it; spokes with no (resolvable) hub trail at the end. Returns indices into
-    /// `self.nodes`; every node appears exactly once.
+    /// `self.nodes` the filter keeps, each at most once, and every selection
+    /// goes through here.
     pub(super) fn mesh_rows(&self) -> Vec<usize> {
         let is_hub = |i: usize| self.nodes[i].endpoint.is_some();
         let hubs: Vec<usize> = (0..self.nodes.len()).filter(|&i| is_hub(i)).collect();
@@ -279,6 +344,12 @@ impl App {
                 rows.push(i);
             }
         }
+        rows.retain(|&i| {
+            let n = &self.nodes[i];
+            let hub = n.hubs.first().map(String::as_str).unwrap_or("");
+            let endpoint = n.endpoint.as_deref().unwrap_or("");
+            filter::matches(&self.query, &[&n.name, &n.address, endpoint, hub])
+        });
         rows
     }
 
@@ -290,8 +361,6 @@ impl App {
             .and_then(|i| rows.get(i))
             .and_then(|&n| self.nodes.get(n))
     }
-
-    // --- input ------------------------------------------------------------
 }
 
 pub fn run(dirs: &[PathBuf]) -> Result<()> {
