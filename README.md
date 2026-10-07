@@ -16,103 +16,88 @@ ewg self update  # install the latest
 
 No cargo yet? Rust installs the same way on every distro: [rustup.rs](https://rustup.rs).
 
-![A tour of ewg: inspecting a running interface, toggling one up and down, browsing the mesh, creating a node with a generated keypair, exporting it as an Ansible entry, deleting it, and generating every node's config](https://gitlab.com/safteinzz/easywireguard/-/raw/main/readme-assets/demo.gif)
-
 ## Manage every interface
-
-Bare `ewg` opens on the interface manager: every `.conf` across the dirs you
-registered, with what it is doing right now. `● up` is running, `○ down` is
-stopped, `⏻ boot` starts with the machine.
 
 ![The interface manager listing five WireGuard configs, two of them up and two flagged to start at boot, with the action keys along the bottom](https://gitlab.com/safteinzz/easywireguard/-/raw/main/readme-assets/interfaces.png)
 
-## Tell whether it is actually working
+Legend: `● up` running · `○ down` stopped · `⏻ boot` starts with the machine
 
-`i` shows the config, and for a running interface a live `wg show` under it:
-the peer, the last handshake, the bytes moved.
+```bash
+ewg                      # the interface manager
+ewg list                 # every interface across your dirs, up or down
+ewg up <name>            # bring one up
+ewg down <name>          # and take it down
+```
+
+Every `.conf` across the dirs you registered, not just `/etc/wireguard`, with what it is doing right now.
+
+## Tell whether it is actually working
 
 ![The inspector over the interface list, showing a config followed by a live wg show readout with a handshake a minute old and transfer counters](https://gitlab.com/safteinzz/easywireguard/-/raw/main/readme-assets/inspect.png)
 
-## See the whole mesh
+```bash
+ewg status               # only the ones up; --json for a status bar, no root
+```
 
-Describe each node once and `ewg` lays them out hub-and-spoke, spokes nested
-under the hub they dial. A hub has an endpoint and meshes with every other hub;
-a spoke has none and lists only its hub, so phones never get useless peer blocks
-for each other.
+`i` shows the config, and for a running interface a live `wg show` under it: the peer, the last handshake, the bytes moved.
+
+## See the whole mesh
 
 ![The Mesh tab showing two hubs with their spokes nested underneath, each row with its mesh IP and endpoint](https://gitlab.com/safteinzz/easywireguard/-/raw/main/readme-assets/mesh.png)
 
-By default a node advertises just its own `/32`. Set `allowed-ips` to `0.0.0.0/0`
-to make a hub a full-tunnel exit, or to a LAN subnet for site-to-site.
+```bash
+ewg mesh add <name> ...  # a node: --address and --pubkey, --endpoint for a hub
+ewg mesh gen -o out/     # write every node's .conf
+```
+
+Describe each node once and it is laid out hub and spoke. A hub meshes with every other hub and a spoke lists only its hub, so phones never get useless peer blocks for each other.
 
 ## Create a node without touching a key
 
-`c` opens a wizard: pick **Spoke** or **Hub**, fill a couple of fields, and the
-keypair is generated for you. **store** keeps the private key in the manifest so
-you can re-export a working config later; **redact** leaves it only in the QR and
-file handed out at create, nothing secret at rest.
-
 ![The node wizard with a Spoke/Hub toggle and fields for name, address, DNS, the hub to dial, and where the private key goes](https://gitlab.com/safteinzz/easywireguard/-/raw/main/readme-assets/wizard.png)
+
+`c` generates the keypair for you. **store** keeps the private key in the manifest so you can export a working config later, and **redact** leaves it only in what you hand out, so nothing secret is at rest.
 
 ## Onboard a phone by scanning
 
-`↵` on a node renders its config as a black-on-white QR that scans on any
-terminal theme. Open the WireGuard app, scan, done - no file transfer. `E`
-exports the same config as `out/<name>.conf`, an install to `/etc/wireguard`, a
-PNG, or an Ansible peer entry.
-
 ![A scannable QR code of a node's generated config, over the mesh list, titled scan phone](https://gitlab.com/safteinzz/easywireguard/-/raw/main/readme-assets/qr.png)
+
+```bash
+ewg qr <node>            # that node's config as a QR, for the phone app
+```
+
+`↵` on a node shows its config as a QR that scans on any terminal theme, so a phone needs no file transfer. `E` exports the same config as a file, an install to `/etc/wireguard`, a PNG or an Ansible peer entry.
 
 ## Commands
 
-The TUI wraps these; call them directly to automate.
-
 ```bash
-ewg list                 # every interface across your dirs, up or down
-ewg status               # only the ones up; --json for a status bar, no root
-ewg up <name>            # bring one up
-ewg down <name>          # and take it down
-ewg dir add <path>       # register where .conf files live, not just /etc/wireguard
+ewg dir add <path>       # register where .conf files live
 ewg check <path>...      # validate configs, non-zero exit if one is broken
 ewg key                  # a new keypair
 ewg psk                  # a new preshared key
 ewg pubkey <private>     # the public half of a private key
-ewg mesh add <name> ...  # a node: --address and --pubkey, --endpoint for a hub
-ewg mesh gen -o out/     # write every node's .conf
-ewg qr <node>            # that node's config as a QR, for the phone app
 ```
 
-Every command takes `--dir` to use one directory for that run, and
-`ewg <command> --help` has the rest, `mesh add`'s hub, exit and DNS flags
-included.
+Every command takes `--dir` to use one directory for that run, `ewg <command> --help` has the details, and `?` in the TUI lists every key.
 
-## Keys
+Output is for people, and `dir`, `mesh` and `status` take `--json` with fixed field names. `check` exits non-zero when a config is broken, and every failure names itself on stderr and exits non-zero.
 
-| key | does |
-| --- | --- |
-| `j` `k` / `↑` `↓` | move in the list |
-| `h` `l` / `←` `→` / `tab` `shift-tab` | switch tab |
-| `/` | filter the list; `↵` keeps it, `esc` drops it |
-| `c` / `e` / `d` | create, edit, delete; deleting a node asks you to type its name |
-| `r` | read the tab's data again |
-| `esc` | cancel a form or a question, close help or a box you read |
-| `?` | every key, on every tab |
-| `q` / `ctrl-c` | quit; in a form or a box, `ctrl-c` is `esc` |
+## Where it keeps things
 
-Each tab's own keys are on its bottom line, and `?` lists them all.
+```
+/etc/wireguard/*.conf     your interfaces, beside every dir you register
+~/.config/ewg/dirs.toml   the dirs you registered
+./mesh.toml               the mesh, read from the folder you run ewg in
+./out/                    the configs g and mesh gen write
+```
+
+`mesh.toml` may hold private keys for `store` nodes, so gitignore it unless every node is redacted.
 
 ## Notes
 
-- Reading `/etc/wireguard` needs root; `ewg` auto-elevates with `sudo` (disable
-  with `EWG_NO_SUDO=1`). Point elsewhere with `--dir` or `$EWG_DIR`.
-- `mesh.toml` may hold private keys for `store`-mode nodes, so treat it as a
-  secret and gitignore it; a redacted or public-only manifest is safe to commit.
-  `mesh list --json` never prints private keys.
-- The Mesh tab reads `mesh.toml` from the directory you run `ewg` in, and `g`
-  writes to `./out` beside it.
-- Start-on-boot uses systemd (`wg-quick@<name>`); toggling interfaces shells out
-  to your `wg-quick`. Keys and config generation are pure Rust, never a wrapper
-  around `wg`.
+- Reading `/etc/wireguard` needs root, so `ewg` reruns itself with `sudo`; `EWG_NO_SUDO=1` stops that, and `status --json` never needs it.
+- A node advertises just its own `/32`. Set `allowed-ips` to `0.0.0.0/0` to make a hub a full-tunnel exit, or to a LAN subnet for site-to-site.
+- Start-on-boot uses systemd (`wg-quick@<name>`), and toggling an interface runs your `wg-quick`.
 
 ## Compatibility
 
