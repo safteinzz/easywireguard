@@ -222,17 +222,19 @@ impl Prompt {
             Field::new("Name", "")
                 .required()
                 .hint("e.g. phone, laptop, vps"),
-            Field::new("Address", default_addr),
         ];
         match kind {
             NodeKind::Spoke => {
-                fields.push(Field::new("DNS", "").hint("e.g. a Pi-hole"));
+                // Ahead of Address, whose default is taken from the hub's subnet.
                 fields.push(
                     Field::pick("Hub to dial", hubs.to_vec())
                         .hint("no hubs yet - create one first"),
                 );
+                fields.push(Field::new("Address", default_addr));
+                fields.push(Field::new("DNS", "").hint("resolver IPs, search domains"));
             }
             NodeKind::Hub => {
+                fields.push(Field::new("Address", default_addr));
                 fields.push(
                     Field::new("Endpoint", "")
                         .required()
@@ -287,6 +289,17 @@ impl Prompt {
             .find(|f| f.label.starts_with(label_starts))
         {
             f.value = value.to_string();
+        }
+    }
+
+    /// Replace a field's default by label prefix (no-op if absent).
+    pub(super) fn set_default(&mut self, label_starts: &str, default: &str) {
+        if let Some(f) = self
+            .fields
+            .iter_mut()
+            .find(|f| f.label.starts_with(label_starts))
+        {
+            f.default = default.to_string();
         }
     }
 

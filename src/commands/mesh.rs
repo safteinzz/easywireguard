@@ -51,7 +51,7 @@ pub enum MeshAction {
         /// subnet (site-to-site). Defaults to this node's own `/32`.
         #[arg(long = "allowed-ips")]
         allowed_ips: Option<String>,
-        /// DNS for this node's own interface (e.g. a Pi-hole behind the tunnel)
+        /// DNS for this node's own interface: resolver IPs and search domains, comma-separated
         #[arg(long)]
         dns: Option<String>,
         /// Seconds between keepalives peers send to this node (e.g. 25)

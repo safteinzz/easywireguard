@@ -9,10 +9,13 @@
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
+use std::net::IpAddr;
 use std::path::Path;
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Manifest {
+    /// The port every hub listens on. A spoke's config gets no `ListenPort`, so
+    /// it takes a free one and never clashes with another VPN on the device.
     #[serde(default = "default_port")]
     pub listen_port: u16,
     #[serde(rename = "node", default)]
@@ -33,8 +36,9 @@ pub struct Node {
     /// send that traffic here. Comma-separated for multiple.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub allowed_ips: Option<String>,
-    /// DNS server for THIS node's own `[Interface]` (e.g. a Pi-hole behind the
-    /// tunnel), written as `DNS = ...` when present. Comma-separated for multiple.
+    /// DNS for THIS node's own `[Interface]`, written as `DNS = ...` when
+    /// present: resolver IPs and search domains, comma-separated. Any other
+    /// entry is refused.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dns: Option<String>,
     /// Seconds between keepalives sent TO this node (set on a stable/behind-NAT
@@ -92,8 +96,10 @@ impl Manifest {
         std::fs::write(path, text).with_context(|| format!("writing manifest `{}`", path.display()))
     }
 
-    /// Append a node, rejecting duplicate names or mesh addresses.
+    /// Append a node, rejecting duplicate names or mesh addresses and a `dns`
+    /// entry that is neither an IP nor a search domain.
     pub fn add(&mut self, node: Node) -> Result<()> {
+        check_dns(&node)?;
         if self.nodes.iter().any(|n| n.name == node.name) {
             bail!("node `{}` already exists", node.name);
         }
@@ -129,6 +135,7 @@ impl Manifest {
             if !addrs.insert(ip.to_string()) {
                 bail!("duplicate mesh address `{ip}` - each node needs its own");
             }
+            check_dns(n)?;
         }
         Ok(())
     }
@@ -167,7 +174,9 @@ impl Manifest {
         if let Some(dns) = &node.dns {
             s.push_str(&format!("DNS        = {dns}\n"));
         }
-        s.push_str(&format!("ListenPort = {}\n", self.listen_port));
+        if Self::is_hub(node) {
+            s.push_str(&format!("ListenPort = {}\n", self.listen_port));
+        }
         if let Some(pu) = &node.post_up {
             s.push_str(&format!("PostUp     = {pu}\n"));
         }
@@ -209,6 +218,44 @@ impl Node {
 /// The bare IP from an `address` field: `10.10.0.1/24` -> `10.10.0.1`.
 fn ip_of(address: &str) -> &str {
     address.split('/').next().unwrap_or(address)
+}
+
+/// Every entry in `dns` must be an IP or a search domain. The Android app
+/// refuses to import a config with anything else there, and wg-quick hands an
+/// entry holding a colon, or only digits and dots, to the resolver as a server.
+fn check_dns(node: &Node) -> Result<()> {
+    for entry in node.dns.iter().flat_map(|d| d.split(',')).map(str::trim) {
+        if entry.is_empty() {
+            bail!(
+                "dns on `{}` has an empty entry: drop the stray comma, or leave dns out",
+                node.name
+            );
+        }
+        if entry.parse::<IpAddr>().is_err() && !is_search_domain(entry) {
+            bail!(
+                "dns `{entry}` on `{}` is neither an IP nor a search domain: give resolver IPs, comma-separated",
+                node.name
+            );
+        }
+    }
+    Ok(())
+}
+
+/// A hostname as the Android app accepts one (labels of up to 63 letters,
+/// digits and inner hyphens, an optional trailing dot), unless it is only digits
+/// and dots, which wg-quick would take for a server.
+fn is_search_domain(entry: &str) -> bool {
+    let name = entry.strip_suffix('.').unwrap_or(entry);
+    entry.len() <= 255
+        && !name.bytes().all(|b| b.is_ascii_digit() || b == b'.')
+        && name.split('.').all(|label| {
+            (1..=63).contains(&label.len())
+                && label
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+                && !label.starts_with('-')
+                && !label.ends_with('-')
+        })
 }
 
 #[cfg(test)]
@@ -447,5 +494,61 @@ mod tests {
         };
         let e = m.validate().unwrap_err().to_string();
         assert!(e.contains("duplicate mesh address"), "got: {e}");
+    }
+
+    #[test]
+    fn a_dns_entry_that_is_neither_an_ip_nor_a_search_domain_is_refused() {
+        let spoke = |dns: &str| Node {
+            name: "S".into(),
+            address: "10.10.0.9/24".into(),
+            public_key: "z".into(),
+            endpoint: None,
+            private_key: None,
+            allowed_ips: None,
+            dns: Some(dns.into()),
+            keepalive: None,
+            hubs: Vec::new(),
+            post_up: None,
+            post_down: None,
+        };
+        for ok in [
+            "192.0.2.53",
+            "2001:db8::53",
+            "192.0.2.53, lan",
+            "corp.example.com.",
+        ] {
+            assert!(
+                manifest().add(spoke(ok)).is_ok(),
+                "`{ok}` is a valid DNS line"
+            );
+        }
+        for bad in [
+            "vpn.example.com:51820",
+            "192.0.2.53,,lan",
+            "192.0.2.256",
+            "192.0.2.53 198.51.100.53",
+        ] {
+            assert!(
+                manifest().add(spoke(bad)).is_err(),
+                "`{bad}` must be refused on add"
+            );
+            let mut m = manifest();
+            m.nodes.push(spoke(bad));
+            assert!(m.validate().is_err(), "`{bad}` must be refused on load");
+        }
+    }
+
+    #[test]
+    fn only_a_hub_config_carries_a_listen_port() {
+        let mut m = manifest();
+        m.nodes[1].endpoint = None; // B becomes a spoke
+        assert!(
+            m.node_config(&m.nodes[0]).contains("ListenPort = 51820"),
+            "a hub listens on the manifest's port"
+        );
+        assert!(
+            !m.node_config(&m.nodes[1]).contains("ListenPort"),
+            "a spoke leaves its port to the kernel"
+        );
     }
 }

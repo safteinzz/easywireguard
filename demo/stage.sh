@@ -248,12 +248,13 @@ seed_state() {
 
   # Handshake ages are what `wg show` renders as "1 minute, 12 seconds ago", so
   # they are what makes the readout look like a tunnel that is actually carrying
-  # traffic rather than a fresh, empty one.
+  # traffic rather than a fresh, empty one. `mesh` is a spoke's config, which
+  # sets no `ListenPort`, so its port is one the kernel picked.
   cat > "$STATE/show/mesh" <<EOF
 interface: mesh
   public key: $LAPTOP_PUB
   private key: (hidden)
-  listening port: 51820
+  listening port: 47312
 
 peer: $VPS_PUB
   endpoint: 192.0.2.1:51820

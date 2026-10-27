@@ -299,9 +299,10 @@ impl App {
                 self.prompt = Some(Prompt::create_node(
                     NodeKind::Spoke,
                     KeySource::Generate,
-                    &self.next_address(),
+                    "",
                     &self.hub_names(),
-                ))
+                ));
+                self.refresh_address_default();
             }
             KeyCode::Char('e') => {
                 let hubs = self.hub_names();
@@ -393,7 +394,7 @@ impl App {
                 let p = self.prompt.as_ref().unwrap();
                 let cur_kind = matches!(p.fields[p.idx].kind, FieldKind::Type(_));
                 let cur_key = matches!(p.fields[p.idx].kind, FieldKind::Key(_));
-                let (addr, hubs) = (self.next_address(), self.hub_names());
+                let (addr, hubs) = (self.next_address(None), self.hub_names());
                 let p = self.prompt.as_mut().unwrap();
                 if cur_kind {
                     p.toggle_kind(&addr, &hubs);
@@ -402,6 +403,7 @@ impl App {
                 } else {
                     p.cycle_pick(delta);
                 }
+                self.refresh_address_default();
                 return;
             }
         }

@@ -54,7 +54,7 @@ Describe each node once and it is laid out hub and spoke. A hub meshes with ever
 
 ## Create a node without touching a key
 
-![The node wizard with a Spoke/Hub toggle and fields for name, address, DNS, the hub to dial, and where the private key goes](https://gitlab.com/safteinzz/easywireguard/-/raw/main/readme-assets/wizard.png)
+![The node wizard with a Spoke/Hub toggle and fields for name, the hub to dial, address, DNS, and where the private key goes](https://gitlab.com/safteinzz/easywireguard/-/raw/main/readme-assets/wizard.png)
 
 `c` generates the keypair for you. **store** keeps the private key in the manifest so you can export a working config later, and **redact** leaves it only in what you hand out, so nothing secret is at rest.
 

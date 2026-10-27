@@ -4,7 +4,7 @@
 # runs it.
 #
 #   ./render.sh              every tape
-#   ./render.sh demo         one tape
+#   ./render.sh shots        one tape
 #
 # Each tape runs in the image from ./Dockerfile, in a container of its own that
 # stages, records and tears down, because the tapes share one stage and would
@@ -17,7 +17,7 @@ ENGINE="$(command -v podman || command -v docker || true)"
 IMAGE=localhost/easywireguard-render
 
 TAPES=("$@")
-[ ${#TAPES[@]} -gt 0 ] || TAPES=(shots overlays demo)
+[ ${#TAPES[@]} -gt 0 ] || TAPES=(shots overlays)
 
 (cd .. && cargo build --release)
 # The Dockerfile is the whole build context: nothing in this folder is copied in.

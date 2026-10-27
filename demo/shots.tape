@@ -68,7 +68,8 @@ Sleep 700ms
 
 # ---- the node wizard -----------------------------------------------------
 # Walked to the last field, so the frame shows the whole form filled in: type,
-# name, the address it suggested, the hub picker, and where the key goes.
+# name, the hub picker, the address it suggested in that hub's subnet, the DNS,
+# and where the key goes.
 Hide
 Type "c"
 Sleep 500ms
@@ -76,8 +77,8 @@ Enter
 Type "guest-phone"
 Enter
 Enter
-Type "10.99.0.1"
 Enter
+Type "10.99.0.1"
 Enter
 Enter
 Sleep 800ms

@@ -29,7 +29,9 @@ use ratatui::crossterm::{
 };
 use ratatui::prelude::*;
 use ratatui::widgets::ListState;
+use std::collections::HashSet;
 use std::io::stdout;
+use std::net::Ipv4Addr;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -292,19 +294,40 @@ impl App {
         self.set_status(msg);
     }
 
-    /// Suggest the next free `10.99.0.x/24` from the nodes already in the manifest.
-    pub(super) fn next_address(&self) -> String {
-        let used: Vec<u8> = self
+    /// Suggest the next free address in `hub`'s subnet (a hub at `10.10.7.1/24`
+    /// alone gives `10.10.7.2/24`), or in `10.99.0.0/24` when there is no hub or
+    /// its address is not IPv4.
+    pub(super) fn next_address(&self, hub: Option<&str>) -> String {
+        const FALLBACK: &str = "10.99.0.1/24";
+        let used: HashSet<Ipv4Addr> = self
             .nodes
             .iter()
-            .filter_map(|n| {
-                n.mesh_ip()
-                    .strip_prefix("10.99.0.")
-                    .and_then(|s| s.parse().ok())
-            })
+            .filter_map(|n| n.mesh_ip().parse().ok())
             .collect();
-        let next = (1..=254).find(|c| !used.contains(c)).unwrap_or(1);
-        format!("10.99.0.{next}/24")
+        let base = hub
+            .and_then(|h| self.nodes.iter().find(|n| n.name == h))
+            .map_or(FALLBACK, |n| n.address.as_str());
+        free_in_subnet(base, &used)
+            .or_else(|| free_in_subnet(FALLBACK, &used))
+            .unwrap_or_else(|| FALLBACK.into())
+    }
+
+    /// Point the create wizard's Address default at the picked hub's subnet. An
+    /// edit keeps the node's own address, so it is left alone.
+    pub(super) fn refresh_address_default(&mut self) {
+        let Some(p) = &self.prompt else {
+            return;
+        };
+        if !matches!(p.action, Action::AddNode) {
+            return;
+        }
+        let hub = (p.kind() == NodeKind::Spoke)
+            .then(|| p.value_of("Hub to dial"))
+            .filter(|h| !h.is_empty());
+        let addr = self.next_address(hub.as_deref());
+        if let Some(p) = &mut self.prompt {
+            p.set_default("Address", &addr);
+        }
     }
 
     /// Names of the hubs (nodes with an endpoint) - the pickable targets for a spoke.
@@ -406,6 +429,22 @@ fn event_loop<B: Backend>(terminal: &mut Terminal<B>, dirs: &[PathBuf]) -> Resul
     Ok(())
 }
 
+/// The first host address of `address`'s IPv4 subnet that is not in `used`, with
+/// the same prefix. None for IPv6, an unparsable address, a `/31` or `/32`, or a
+/// subnet with nothing free.
+fn free_in_subnet(address: &str, used: &HashSet<Ipv4Addr>) -> Option<String> {
+    let (ip, prefix) = address.split_once('/')?;
+    let ip: Ipv4Addr = ip.parse().ok()?;
+    let prefix: u32 = prefix.parse().ok().filter(|p| *p <= 30)?;
+    let mask = u32::MAX.checked_shl(32 - prefix).unwrap_or(0);
+    let network = u32::from(ip) & mask;
+    let broadcast = network | !mask;
+    (network + 1..broadcast)
+        .map(Ipv4Addr::from)
+        .find(|c| !used.contains(c))
+        .map(|c| format!("{c}/{prefix}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -434,10 +473,10 @@ mod tests {
     #[test]
     pub(super) fn next_address_picks_the_first_free_ip() {
         let mut a = app();
-        assert_eq!(a.next_address(), "10.99.0.1/24", "empty manifest -> .1");
+        assert_eq!(a.next_address(None), "10.99.0.1/24", "empty manifest -> .1");
         a.nodes = vec![node("hub", 1), node("phone", 2), node("laptop", 4)];
         assert_eq!(
-            a.next_address(),
+            a.next_address(None),
             "10.99.0.3/24",
             "skips .1/.2/.4, takes the gap"
         );
