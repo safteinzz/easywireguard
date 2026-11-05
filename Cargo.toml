@@ -15,6 +15,10 @@ categories = ["command-line-utilities", "network-programming"]
 # download; demo/ is what renders them, and is no use to anyone installing.
 exclude = ["readme-assets/", "demo/"]
 
+# The programs ewg starts, for tools that ask what an install needs beside its libraries.
+[package.metadata]
+runs = ["sudo", "wg", "wg-quick", "systemctl", "wl-copy", "xclip", "xsel", "pbcopy", "clip.exe"]
+
 # The crate is `easywireguard`, but the command you type is the shorter `ewg`.
 [[bin]]
 name = "ewg"
