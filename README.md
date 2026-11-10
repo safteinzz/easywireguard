@@ -1,7 +1,5 @@
 # easywireguard (`ewg`)
 
-> **Canonical:** [gitlab.com/safteinzz/easywireguard](https://gitlab.com/safteinzz/easywireguard) · **Mirror:** [github.com/safteinzz/easywireguard](https://github.com/safteinzz/easywireguard)
-
 <!-- desc:start -->
 mesh, minus the mess - interfaces, keys and full-mesh configs in one CLI + TUI
 <!-- desc:end -->
@@ -18,7 +16,7 @@ No cargo yet? Rust installs the same way on every distro: [rustup.rs](https://ru
 
 ## Manage every interface
 
-![The interface manager listing five WireGuard configs, two of them up and two flagged to start at boot, with the action keys along the bottom](https://gitlab.com/safteinzz/easywireguard/-/raw/main/readme-assets/interfaces.png)
+![The interface manager listing five WireGuard configs, two of them up and two flagged to start at boot, with the action keys along the bottom](https://raw.githubusercontent.com/safteinzz/easywireguard/main/readme-assets/interfaces.png)
 
 Legend: `● up` running · `○ down` stopped · `⏻ boot` starts with the machine
 
@@ -33,7 +31,7 @@ Every `.conf` across the dirs you registered, not just `/etc/wireguard`, with wh
 
 ## Tell whether it is actually working
 
-![The inspector over the interface list, showing a config followed by a live wg show readout with a handshake a minute old and transfer counters](https://gitlab.com/safteinzz/easywireguard/-/raw/main/readme-assets/inspect.png)
+![The inspector over the interface list, showing a config followed by a live wg show readout with a handshake a minute old and transfer counters](https://raw.githubusercontent.com/safteinzz/easywireguard/main/readme-assets/inspect.png)
 
 ```bash
 ewg status               # only the ones up; --json for a status bar, no root
@@ -43,7 +41,7 @@ ewg status               # only the ones up; --json for a status bar, no root
 
 ## See the whole mesh
 
-![The Mesh tab showing two hubs with their spokes nested underneath, each row with its mesh IP and endpoint](https://gitlab.com/safteinzz/easywireguard/-/raw/main/readme-assets/mesh.png)
+![The Mesh tab showing two hubs with their spokes nested underneath, each row with its mesh IP and endpoint](https://raw.githubusercontent.com/safteinzz/easywireguard/main/readme-assets/mesh.png)
 
 ```bash
 ewg mesh add <name> ...  # a node: --address and --pubkey, --endpoint for a hub
@@ -54,13 +52,13 @@ Describe each node once and it is laid out hub and spoke. A hub meshes with ever
 
 ## Create a node without touching a key
 
-![The node wizard with a Spoke/Hub toggle and fields for name, the hub to dial, address, DNS, and where the private key goes](https://gitlab.com/safteinzz/easywireguard/-/raw/main/readme-assets/wizard.png)
+![The node wizard with a Spoke/Hub toggle and fields for name, the hub to dial, address, DNS, and where the private key goes](https://raw.githubusercontent.com/safteinzz/easywireguard/main/readme-assets/wizard.png)
 
 `c` generates the keypair for you. **store** keeps the private key in the manifest so you can export a working config later, and **redact** leaves it only in what you hand out, so nothing secret is at rest.
 
 ## Onboard a phone by scanning
 
-![A scannable QR code of a node's generated config, over the mesh list, titled scan phone](https://gitlab.com/safteinzz/easywireguard/-/raw/main/readme-assets/qr.png)
+![A scannable QR code of a node's generated config, over the mesh list, titled scan phone](https://raw.githubusercontent.com/safteinzz/easywireguard/main/readme-assets/qr.png)
 
 ```bash
 ewg qr <node>            # that node's config as a QR, for the phone app
