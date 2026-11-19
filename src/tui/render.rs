@@ -291,7 +291,7 @@ const HELP: &[HelpSection] = &[
             ("ctrl-j/k ↑↓", "the next, previous field"),
             ("tab shift-tab", "the next, previous field"),
             ("h/l ←→", "step a choice"),
-            ("↵", "the next field, and submit on the last"),
+            ("↵", "submit, from any field"),
             ("esc", "cancel"),
         ],
     ),

@@ -428,13 +428,14 @@ impl App {
                 self.prompt = None;
                 self.set_status("cancelled");
             }
+            // Submits from any field; a refusal leaves the cursor on the blank
+            // starred field it names.
             KeyCode::Enter => {
-                let idx = self.prompt.as_ref().unwrap().idx;
-                if idx + 1 < len {
-                    self.prompt.as_mut().unwrap().idx += 1;
-                } else {
-                    self.submit_prompt();
+                let p = self.prompt.as_mut().unwrap();
+                if let Some(i) = p.first_blank_required() {
+                    p.idx = i;
                 }
+                self.submit_prompt();
             }
             _ if !on_choice => {
                 let field = self.prompt.as_mut().unwrap().cur_mut();

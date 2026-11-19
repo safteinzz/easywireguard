@@ -38,7 +38,7 @@ impl App {
         };
         let name = prompt.value_of("Name");
         if let Err(e) = wg::valid_iface_name(&name) {
-            self.set_status(e.to_string());
+            self.set_failed(e.to_string());
             self.prompt = Some(prompt);
             return;
         }
@@ -64,7 +64,7 @@ impl App {
 
         let renaming = original.as_ref().is_some_and(|o| *o != target);
         if renaming && was_up {
-            self.set_status(format!(
+            self.set_failed(format!(
                 "take `{}` down (↵) before renaming it",
                 stem(original.as_ref().unwrap())
             ));
@@ -122,12 +122,12 @@ impl App {
         let redact = prompt.value_of("Private key").starts_with("redact");
 
         if name.is_empty() {
-            self.set_status("a node name is required");
+            self.set_failed("a node name is required");
             self.prompt = Some(prompt);
             return;
         }
         if kind == NodeKind::Hub && endpoint.is_empty() {
-            self.set_status("a hub needs an endpoint (host:port peers dial)");
+            self.set_failed("a hub needs an endpoint (host:port peers dial)");
             self.prompt = Some(prompt);
             return;
         }
@@ -135,7 +135,8 @@ impl App {
         let mut m = match Manifest::load_or_empty(&self.manifest_path) {
             Ok(m) => m,
             Err(e) => {
-                self.set_status(format!("manifest: {e}"));
+                self.set_failed(format!("manifest: {e}"));
+                self.prompt = Some(prompt);
                 return;
             }
         };
@@ -156,13 +157,13 @@ impl App {
                 match existing_pub {
                     Some(p) => (p, existing_priv, None),
                     None => {
-                        self.set_status("original node vanished");
+                        self.set_failed("original node vanished");
                         return;
                     }
                 }
             } else if keysrc == KeySource::Paste {
                 if pasted_pubkey.is_empty() {
-                    self.set_status("paste a public key, or switch Key to Generate");
+                    self.set_failed("paste a public key, or switch Key to Generate");
                     self.prompt = Some(prompt);
                     return;
                 }

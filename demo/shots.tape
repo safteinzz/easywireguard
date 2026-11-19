@@ -73,14 +73,14 @@ Sleep 700ms
 Hide
 Type "c"
 Sleep 500ms
-Enter
+Tab
 Type "guest-phone"
-Enter
-Enter
-Enter
+Tab
+Tab
+Tab
 Type "10.99.0.1"
-Enter
-Enter
+Tab
+Tab
 Sleep 800ms
 Show
 Sleep 500ms

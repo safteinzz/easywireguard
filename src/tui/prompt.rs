@@ -435,4 +435,12 @@ impl Prompt {
         self.rebuild(self.kind(), self.keysrc().toggled(), default_addr, hubs);
         self.idx = at.min(self.fields.len().saturating_sub(1));
     }
+
+    /// The first starred field still blank as `value_of` reads it, where a
+    /// refused submit puts the cursor.
+    pub(super) fn first_blank_required(&self) -> Option<usize> {
+        self.fields
+            .iter()
+            .position(|f| f.required && f.value.trim().is_empty() && f.default.is_empty())
+    }
 }
